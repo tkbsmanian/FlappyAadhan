@@ -12,7 +12,7 @@ This steering file covers all rendering patterns: sprite animation, particle eff
 
 | Role | Hex | Usage |
 |---|---|---|
-| Sky background | `#1A1A2E` | Canvas background fill |
+| Sky background | `#87CEEB` | Canvas background fill |
 | Primary text | `#FFFFFF` | Most labels and HUD |
 | Title / accent | `#FFD700` | High score, best label, score popup |
 | Danger | `#EF5350` | Game Over title |

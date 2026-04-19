@@ -3,10 +3,11 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Flappy Kiro</title>
+  <title>Flappy Aadhan</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
+  <noscript><link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet"></noscript>
   <style>
     * {
       margin: 0;
@@ -49,12 +50,18 @@
       }
     }
 
-    #game {
+    canvas {
       display: block;
       width: 100%;
       height: 100%;
       image-rendering: pixelated;
       image-rendering: crisp-edges;
+    }
+
+    /* Ensure retro font swap doesn't block first paint */
+    @font-face {
+      font-family: 'Press Start 2P';
+      font-display: swap;
     }
   </style>
 </head>
@@ -140,7 +147,7 @@ const CONFIG = {
   VOL_MUSIC: 0.15,
 
   // Colours
-  COLOUR_SKY: '#1A1A2E',
+  COLOUR_SKY: '#87CEEB',
   COLOUR_PIPE: '#388E3C',
   COLOUR_PIPE_BORDER: '#1B5E20',
   COLOUR_GROUND: '#5D4037',
@@ -152,6 +159,10 @@ const CONFIG = {
 
   // Debug
   DEBUG: false, // set to true via URL: ?DEBUG=1
+
+  // Scores API — set to your API Gateway endpoint after deploying
+  // e.g. 'https://abc123.execute-api.us-east-1.amazonaws.com/prod'
+  API_ENDPOINT: '',
 };
 </script>
 
@@ -159,7 +170,7 @@ const CONFIG = {
   <canvas id="game"></canvas>
 </div>
 
-<script type="module" id="game-logic">
+<script id="game-logic">
 const ConfigLoader = {
   load(defaults) {
     const params = new URLSearchParams(window.location.search);
@@ -212,12 +223,16 @@ function audioInit() {
 }
 
 async function loadAudioBuffer(url) {
+  const t0 = performance.now();
   try {
     const response = await fetch(url);
     const arrayBuffer = await response.arrayBuffer();
-    return await audioCtx.decodeAudioData(arrayBuffer);
+    const buffer = await audioCtx.decodeAudioData(arrayBuffer);
+    Analytics.onAssetLoaded(url.split('/').pop(), Math.round(performance.now() - t0));
+    return buffer;
   } catch (e) {
     console.warn(`[AudioManager] Failed to load ${url} — using synthesis fallback`);
+    Analytics.onAssetFailed(url.split('/').pop());
     return null;
   }
 }
@@ -375,11 +390,267 @@ function storageSetHighScore(n) {
 // Load persisted high score on startup
 inMemoryHighScore = storageGetHighScore();
 
-// --- 6. Ghosty ---
+// --- Scores & Analytics API (Railway backend) --------------------------------
+// Set C.API_ENDPOINT to your Railway service URL after deploying, e.g.:
+//   API_ENDPOINT: 'https://flappy-aadhan-backend.up.railway.app'
+const _sessionId = Math.random().toString(36).slice(2); // unique per page load
+
+const ScoresAPI = {
+  // Submit a score
+  async postScore(playerId, playerName, score) {
+    if (!C.API_ENDPOINT) return null;
+    try {
+      const res = await fetch(`${C.API_ENDPOINT}/scores`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ playerId, playerName, score, sessionId: _sessionId }),
+      });
+      return res.ok ? await res.json() : null;
+    } catch (e) {
+      console.warn('[ScoresAPI] postScore failed:', e.message);
+      return null;
+    }
+  },
+
+  // Fetch top-N leaderboard
+  async getLeaderboard(limit = 10) {
+    if (!C.API_ENDPOINT) return [];
+    try {
+      const res = await fetch(`${C.API_ENDPOINT}/scores?limit=${limit}`);
+      if (!res.ok) return [];
+      const data = await res.json();
+      return data.leaderboard ?? [];
+    } catch (e) {
+      console.warn('[ScoresAPI] getLeaderboard failed:', e.message);
+      return [];
+    }
+  },
+
+  // Fetch a player's profile + score history
+  async getPlayer(playerId) {
+    if (!C.API_ENDPOINT) return null;
+    try {
+      const res = await fetch(`${C.API_ENDPOINT}/scores/${encodeURIComponent(playerId)}`);
+      return res.ok ? await res.json() : null;
+    } catch (e) {
+      console.warn('[ScoresAPI] getPlayer failed:', e.message);
+      return null;
+    }
+  },
+
+  // Fire-and-forget analytics event — uses sendBeacon on game_over
+  event(eventType, value = null, meta = null) {
+    if (!C.API_ENDPOINT) return;
+    const body = { eventType, sessionId: _sessionId, value, meta };
+    if (eventType === 'game_over' && navigator.sendBeacon) {
+      navigator.sendBeacon(
+        `${C.API_ENDPOINT}/analytics/event`,
+        new Blob([JSON.stringify(body)], { type: 'application/json' })
+      );
+    } else {
+      fetch(`${C.API_ENDPOINT}/analytics/event`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      }).catch(() => {});
+    }
+  },
+};
+
+// --- Analytics & Crash Reporting ─────────────────────────────────────────────
+// Self-contained module. Works with or without C.API_ENDPOINT.
+// All data is batched and flushed to avoid per-event network calls.
+const Analytics = (() => {
+  // ── Internal state ──────────────────────────────────────────────────────────
+  const SESSION_ID   = _sessionId; // reuse the session id already created above
+  const FLUSH_MS     = 5000;       // batch flush interval
+  const MAX_QUEUE    = 50;         // max events before forced flush
+
+  let _queue         = [];
+  let _flushTimer    = null;
+  let _gameStartTime = 0;
+  let _flapCount     = 0;
+  let _peakScore     = 0;
+  let _frameCount    = 0;
+  let _frameBudgetMisses = 0;  // frames > 16.67 ms
+  let _lastFrameTime = 0;
+  let _totalFrameMs  = 0;
+
+  // ── Flush queue to backend ──────────────────────────────────────────────────
+  function flush() {
+    if (!_queue.length || !C.API_ENDPOINT) { _queue = []; return; }
+    const batch = _queue.splice(0);
+    const payload = JSON.stringify({ batch });
+
+    // sendBeacon for reliability on page unload
+    if (navigator.sendBeacon) {
+      navigator.sendBeacon(
+        `${C.API_ENDPOINT}/analytics/batch`,
+        new Blob([payload], { type: 'application/json' })
+      );
+    } else {
+      fetch(`${C.API_ENDPOINT}/analytics/batch`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: payload,
+        keepalive: true,
+      }).catch(() => {});
+    }
+  }
+
+  function scheduleFlush() {
+    if (_flushTimer) return;
+    _flushTimer = setTimeout(() => { _flushTimer = null; flush(); }, FLUSH_MS);
+  }
+
+  function push(eventType, value = null, meta = null) {
+    _queue.push({
+      eventType,
+      sessionId: SESSION_ID,
+      value,
+      meta,
+      ts: Date.now(),
+    });
+    if (_queue.length >= MAX_QUEUE) flush();
+    else scheduleFlush();
+  }
+
+  // ── Public API ──────────────────────────────────────────────────────────────
+  return {
+    // ── Player behaviour ──────────────────────────────────────────────────────
+    onGameStart() {
+      _gameStartTime = performance.now();
+      _flapCount     = 0;
+      _peakScore     = 0;
+      push('game_start');
+    },
+
+    onFlap() {
+      _flapCount++;
+      // Track flap rate in buckets — not every flap (too noisy)
+      if (_flapCount % 10 === 0) push('flap_milestone', _flapCount);
+    },
+
+    onPipePassed(pipeScore) {
+      _peakScore = pipeScore;
+      // Track score milestones: 5, 10, 25, 50, 100
+      if ([5, 10, 25, 50, 100].includes(pipeScore)) {
+        push('score_milestone', pipeScore);
+      }
+    },
+
+    onImpossibleTriggered() {
+      push('impossible_triggered', score);
+    },
+
+    onLaserFired() {
+      push('laser_fired', score);
+    },
+
+    onGameOver(finalScore, cause) {
+      const durationMs = Math.round(performance.now() - _gameStartTime);
+      const isNewBest  = finalScore > storageGetHighScore();
+      push('game_over', finalScore, {
+        durationMs,
+        flapCount:  _flapCount,
+        peakScore:  _peakScore,
+        cause,        // 'pipe' | 'ground' | 'ceiling'
+        isNewBest,
+        avgFps:     _frameCount > 0 ? Math.round(_frameCount / (durationMs / 1000)) : null,
+        frameBudgetMissRate: _frameCount > 0
+          ? +(_frameBudgetMisses / _frameCount).toFixed(3)
+          : null,
+      });
+      flush(); // flush immediately on game over
+    },
+
+    onPause()  { push('pause',  null, { score }); },
+    onResume() { push('resume', null, { score }); },
+
+    // ── Performance metrics ───────────────────────────────────────────────────
+    // Call once per frame from the game loop
+    onFrame(frameMs) {
+      _frameCount++;
+      _totalFrameMs += frameMs;
+      if (frameMs > 16.67) _frameBudgetMisses++;
+
+      // Flush a perf sample every 300 frames (~5 s at 60 fps)
+      if (_frameCount % 300 === 0 && currentState === State.PLAYING) {
+        push('perf_sample', null, {
+          avgFrameMs:       +(_totalFrameMs / _frameCount).toFixed(2),
+          budgetMissRate:   +(_frameBudgetMisses / _frameCount).toFixed(3),
+          score,
+        });
+      }
+    },
+
+    // ── Crash / error reporting ───────────────────────────────────────────────
+    onError(message, source, lineno, colno, error) {
+      push('js_error', null, {
+        message: String(message).slice(0, 200),
+        source:  String(source).slice(0, 100),
+        lineno,
+        colno,
+        stack:   error?.stack?.slice(0, 500) ?? null,
+        state:   currentState,
+        score,
+      });
+      flush(); // errors flush immediately
+    },
+
+    onUnhandledRejection(reason) {
+      push('unhandled_rejection', null, {
+        reason: String(reason).slice(0, 200),
+        state:  currentState,
+        score,
+      });
+      flush();
+    },
+
+    // ── Asset load tracking ───────────────────────────────────────────────────
+    onAssetLoaded(asset, durationMs) {
+      push('asset_loaded', durationMs, { asset });
+    },
+
+    onAssetFailed(asset) {
+      push('asset_failed', null, { asset });
+      flush();
+    },
+
+    // ── Page visibility ───────────────────────────────────────────────────────
+    onVisibilityChange(hidden) {
+      push(hidden ? 'tab_hidden' : 'tab_visible', null, { state: currentState, score });
+    },
+
+    // ── Session end (page unload) ─────────────────────────────────────────────
+    onUnload() {
+      push('session_end', null, {
+        state:     currentState,
+        score,
+        durationMs: Math.round(performance.now() - _gameStartTime),
+      });
+      flush();
+    },
+  };
+})();
+// ── Global error + lifecycle hooks ───────────────────────────────────────────
+window.onerror = (msg, src, line, col, err) => Analytics.onError(msg, src, line, col, err);
+window.addEventListener('unhandledrejection', (e) => Analytics.onUnhandledRejection(e.reason));
+window.addEventListener('pagehide', () => Analytics.onUnload());
+document.addEventListener('visibilitychange', () => Analytics.onVisibilityChange(document.hidden));
+
+// ── Ghosty sprite ─────────────────────────────────────────────────────────────
 const ghostyImage = new Image();
 let ghostyImageLoaded = false;
-ghostyImage.onload  = () => { ghostyImageLoaded = true; };
-ghostyImage.onerror = () => { console.warn('[Ghosty] sprite failed to load — using fallback'); };
+const _ghostyLoadStart = performance.now();
+ghostyImage.onload  = () => {
+  ghostyImageLoaded = true;
+  Analytics.onAssetLoaded('ghosty.png', Math.round(performance.now() - _ghostyLoadStart));
+};
+ghostyImage.onerror = () => {
+  console.warn('[Ghosty] sprite failed to load — using fallback');
+  Analytics.onAssetFailed('ghosty.png');
+};
 ghostyImage.src = 'assets/ghosty.png';
 
 const ghosty = {
@@ -414,6 +685,7 @@ function ghostyFlap() {
   ghosty.animTimer = 0;
   audioPlayJump();
   particlesEmit(ghosty.x, ghosty.y + C.GHOSTY_H / 2);
+  Analytics.onFlap();
 }
 
 function ghostyUpdate(dt) {
@@ -474,9 +746,11 @@ function ghostyDraw(ctx) {
   if (ghosty.invincible && !ghosty.flashVisible) return;
 
   if (ghostyImageLoaded) {
-    // Use spritesheet frame if image is wide enough, otherwise draw full image
-    const isSheet = ghostyImage.naturalWidth >= C.GHOSTY_FRAME_W * 2;
+    // Check if the image matches the expected spritesheet dimensions (224×32)
+    const isSheet = ghostyImage.naturalWidth === C.GHOSTY_FRAME_W * C.GHOSTY_FRAME_COUNT
+                 && ghostyImage.naturalHeight === C.GHOSTY_FRAME_H;
     if (isSheet) {
+      // Proper spritesheet — crop the correct frame
       ctx.drawImage(
         ghostyImage,
         ghosty.animFrame * C.GHOSTY_FRAME_W, 0,
@@ -485,6 +759,7 @@ function ghostyDraw(ctx) {
         C.GHOSTY_W, C.GHOSTY_H
       );
     } else {
+      // Single image (not a spritesheet) — draw it scaled to fit
       ctx.drawImage(
         ghostyImage,
         Math.round(ghosty.x), Math.round(ghosty.y),
@@ -492,13 +767,24 @@ function ghostyDraw(ctx) {
       );
     }
   } else {
-    // Fallback: bright ghost shape so it's visible on dark background
-    ctx.fillStyle = '#A0C8FF';
+    // Fallback: white ghost shape clearly visible on dark sky
+    const cx = ghosty.x + C.GHOSTY_W / 2;
+    const r  = C.GHOSTY_W / 2;
+    ctx.fillStyle = '#FFFFFF';
     ctx.beginPath();
-    ctx.arc(ghosty.x + C.GHOSTY_W / 2, ghosty.y + C.GHOSTY_H / 3, C.GHOSTY_W / 2, Math.PI, 0);
+    ctx.arc(cx, ghosty.y + r, r, Math.PI, 0);
     ctx.lineTo(ghosty.x + C.GHOSTY_W, ghosty.y + C.GHOSTY_H);
+    ctx.lineTo(ghosty.x + C.GHOSTY_W * 0.75, ghosty.y + C.GHOSTY_H - 6);
+    ctx.lineTo(ghosty.x + C.GHOSTY_W * 0.5,  ghosty.y + C.GHOSTY_H);
+    ctx.lineTo(ghosty.x + C.GHOSTY_W * 0.25, ghosty.y + C.GHOSTY_H - 6);
     ctx.lineTo(ghosty.x, ghosty.y + C.GHOSTY_H);
     ctx.closePath();
+    ctx.fill();
+    // Eyes
+    ctx.fillStyle = '#1A1A2E';
+    ctx.beginPath();
+    ctx.arc(cx - 7, ghosty.y + r - 2, 4, 0, Math.PI * 2);
+    ctx.arc(cx + 7, ghosty.y + r - 2, 4, 0, Math.PI * 2);
     ctx.fill();
   }
 
@@ -559,6 +845,7 @@ function pipesUpdate(dt) {
       score++;
       audioPlayScoreBeep();
       effectsSpawnPopup(pipe.x + C.PIPE_WIDTH / 2, pipe.gapY);
+      Analytics.onPipePassed(score);
     }
 
     // Cull off-screen pipes
@@ -774,8 +1061,8 @@ function laserDraw(ctx) {
   ctx.fill();
 
   if (ready) {
-    // Pulsing "LASER READY" text
-    ctx.globalAlpha = 0.7 + 0.3 * Math.sin(Date.now() / 200);
+    // Pulsing "LASER READY" text — use rAF timestamp, not Date.now()
+    ctx.globalAlpha = 0.7 + 0.3 * Math.sin(lastTimestamp / 200);
     ctx.fillStyle = C.COLOUR_LASER;
     ctx.font = `8px "${C.FONT_FAMILY}"`;
     ctx.textAlign = 'left';
@@ -801,6 +1088,11 @@ function laserDraw(ctx) {
 }
 
 // --- 10. Collision detection ---
+
+// Pre-allocated boundary rects — reused every frame, zero GC pressure
+const _topRect    = { x: 0, y: 0, w: 0, h: 0 };
+const _bottomRect = { x: 0, y: 0, w: 0, h: 0 };
+
 function rectsOverlap(a, b) {
   return a.x < b.x + b.w &&
          a.x + a.w > b.x &&
@@ -808,7 +1100,11 @@ function rectsOverlap(a, b) {
          a.y + a.h > b.y;
 }
 
-function triggerCollision() {
+// Tracks the cause of the last collision for analytics
+let _lastCollisionCause = 'unknown';
+
+function triggerCollision(cause = 'pipe') {
+  _lastCollisionCause = cause;
   ghosty.invincible = true;
   ghosty.invincibleTimer = C.INVINCIBILITY_MS;
   ghosty.animState = 'death';
@@ -824,20 +1120,21 @@ function checkCollisions() {
   const hb = ghostyHitbox();
 
   // Ground and ceiling (O(1))
-  if (hb.y + hb.h >= C.CANVAS_H - C.GROUND_HEIGHT || hb.y <= 0) {
-    triggerCollision();
-    return;
+  if (hb.y + hb.h >= C.CANVAS_H - C.GROUND_HEIGHT) {
+    triggerCollision('ground'); return;
+  }
+  if (hb.y <= 0) {
+    triggerCollision('ceiling'); return;
   }
 
   // Pipes (O(n), n ≤ 8)
   const halfGap = C.PIPE_GAP / 2;
   for (const pipe of pipePool) {
     if (!pipe.active) continue;
-    const topRect    = { x: pipe.x, y: 0,                            w: C.PIPE_WIDTH, h: pipe.gapY - halfGap };
-    const bottomRect = { x: pipe.x, y: pipe.gapY + halfGap,           w: C.PIPE_WIDTH, h: C.CANVAS_H - (pipe.gapY + halfGap) };
-    if (rectsOverlap(hb, topRect) || rectsOverlap(hb, bottomRect)) {
-      triggerCollision();
-      return;
+    _topRect.x = pipe.x; _topRect.y = 0; _topRect.w = C.PIPE_WIDTH; _topRect.h = pipe.gapY - halfGap;
+    _bottomRect.x = pipe.x; _bottomRect.y = pipe.gapY + halfGap; _bottomRect.w = C.PIPE_WIDTH; _bottomRect.h = C.CANVAS_H - (pipe.gapY + halfGap);
+    if (rectsOverlap(hb, _topRect) || rectsOverlap(hb, _bottomRect)) {
+      triggerCollision('pipe'); return;
     }
   }
 }
@@ -876,8 +1173,11 @@ function cloudScrollSpeed(layer) {
 }
 
 function cloudsUpdate(dt) {
+  // Compute both layer speeds once — avoids calling currentPipeSpeed() 14 times per frame
+  const speedFar  = currentPipeSpeed() * C.CLOUD_SPEED_FAR;
+  const speedNear = currentPipeSpeed() * C.CLOUD_SPEED_NEAR;
   for (const cloud of cloudPool) {
-    cloud.x -= cloudScrollSpeed(cloud.layer) * dt;
+    cloud.x -= (cloud.layer === 0 ? speedFar : speedNear) * dt;
     if (cloud.x + cloud.radiusX < 0) {
       cloud.x = C.CANVAS_W + cloud.radiusX;
       cloud.y = randomCloudY(cloud.layer);
@@ -885,24 +1185,37 @@ function cloudsUpdate(dt) {
   }
 }
 
-function cloudsDraw(ctx, layer) {
-  const alpha = layer === 0 ? C.CLOUD_ALPHA_FAR : C.CLOUD_ALPHA_NEAR;
+// Draw both cloud layers in two passes (far first, then near) — single save/restore
+function cloudsDraw(ctx) {
   ctx.save();
   ctx.fillStyle = '#FFFFFF';
-  ctx.globalAlpha = alpha;
+
+  // Far layer (layer 0) — lower alpha, drawn first (behind near)
+  ctx.globalAlpha = C.CLOUD_ALPHA_FAR;
   for (const cloud of cloudPool) {
-    if (cloud.layer !== layer) continue;
+    if (cloud.layer !== 0) continue;
     ctx.beginPath();
-    // Centre puff
     ctx.ellipse(cloud.x, cloud.y, cloud.radiusX, cloud.radiusY, 0, 0, Math.PI * 2);
-    // Left puff
     ctx.ellipse(cloud.x - cloud.radiusX * 0.5, cloud.y + cloud.radiusY * 0.2,
                 cloud.radiusX * 0.6, cloud.radiusY * 0.7, 0, 0, Math.PI * 2);
-    // Right puff
     ctx.ellipse(cloud.x + cloud.radiusX * 0.5, cloud.y + cloud.radiusY * 0.2,
                 cloud.radiusX * 0.6, cloud.radiusY * 0.7, 0, 0, Math.PI * 2);
     ctx.fill();
   }
+
+  // Near layer (layer 1) — higher alpha, drawn on top
+  ctx.globalAlpha = C.CLOUD_ALPHA_NEAR;
+  for (const cloud of cloudPool) {
+    if (cloud.layer !== 1) continue;
+    ctx.beginPath();
+    ctx.ellipse(cloud.x, cloud.y, cloud.radiusX, cloud.radiusY, 0, 0, Math.PI * 2);
+    ctx.ellipse(cloud.x - cloud.radiusX * 0.5, cloud.y + cloud.radiusY * 0.2,
+                cloud.radiusX * 0.6, cloud.radiusY * 0.7, 0, 0, Math.PI * 2);
+    ctx.ellipse(cloud.x + cloud.radiusX * 0.5, cloud.y + cloud.radiusY * 0.2,
+                cloud.radiusX * 0.6, cloud.radiusY * 0.7, 0, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
   ctx.restore();
 }
 
@@ -1024,13 +1337,21 @@ function enterState(state) {
       particlesReset();
       effectsReset();
       audioBgStart();
+      ScoresAPI.event('game_start');
+      Analytics.onGameStart();
       break;
     case State.PAUSED:
       audioBgPause();
+      Analytics.onPause();
       break;
     case State.GAME_OVER:
       audioBgStop();
       storageSetHighScore(score);
+      if (score > 0) {
+        ScoresAPI.postScore('Aadhan', 'Aadhan', score);
+        ScoresAPI.event('game_over', score);
+      }
+      Analytics.onGameOver(score, _lastCollisionCause);
       break;
     case State.MENU:
       audioBgStop();
@@ -1092,6 +1413,7 @@ function handleInput(type, px, py) {
       break;
     case State.PAUSED:
       if (type === 'pause' || type === 'action') {
+        Analytics.onResume();
         transitionTo(State.PLAYING);
       }
       break;
@@ -1200,8 +1522,7 @@ function render() {
 function renderBackground(ctx) {
   ctx.fillStyle = C.COLOUR_SKY;
   ctx.fillRect(0, 0, C.CANVAS_W, C.CANVAS_H);
-  cloudsDraw(ctx, 0); // far clouds
-  cloudsDraw(ctx, 1); // near clouds
+  cloudsDraw(ctx); // far + near clouds in one pass
 }
 
 function renderMenu() {
@@ -1214,10 +1535,10 @@ function renderMenu() {
   // Shadow
   ctx.fillStyle = 'rgba(0,0,0,0.5)';
   ctx.font = `20px "${C.FONT_FAMILY}"`;
-  ctx.fillText('FLAPPY KIRO', C.CANVAS_W / 2 + 2, 162);
+  ctx.fillText('FLAPPY AADHAN', C.CANVAS_W / 2 + 2, 162);
   // Text
   ctx.fillStyle = '#FFFFFF';
-  ctx.fillText('FLAPPY KIRO', C.CANVAS_W / 2, 160);
+  ctx.fillText('FLAPPY AADHAN', C.CANVAS_W / 2, 160);
 
   // Ghosty idle on menu
   ghostyDraw(ctx);
@@ -1242,8 +1563,7 @@ function renderPlaying() {
   // Background
   ctx.fillStyle = C.COLOUR_SKY;
   ctx.fillRect(0, 0, C.CANVAS_W, C.CANVAS_H);
-  cloudsDraw(ctx, 0);
-  cloudsDraw(ctx, 1);
+  cloudsDraw(ctx);
 
   // Game objects
   pipesDraw(ctx);
@@ -1273,8 +1593,8 @@ function renderPlaying() {
   // Impossible mode countdown
   if (impossibleActive) {
     const secs = Math.ceil(impossibleTimer / 1000);
-    // Flashing red background pill
-    ctx.fillStyle = `rgba(255,50,50,${0.5 + 0.3 * Math.sin(Date.now() / 150)})`;
+    // Flashing red background pill — use rAF timestamp, not Date.now()
+    ctx.fillStyle = `rgba(255,50,50,${0.5 + 0.3 * Math.sin(lastTimestamp / 150)})`;
     ctx.beginPath();
     ctx.roundRect(8, 34, 130, 22, 4);
     ctx.fill();
@@ -1294,8 +1614,7 @@ function renderPaused() {
   ctx.save();
   ctx.fillStyle = C.COLOUR_SKY;
   ctx.fillRect(0, 0, C.CANVAS_W, C.CANVAS_H);
-  cloudsDraw(ctx, 0);
-  cloudsDraw(ctx, 1);
+  cloudsDraw(ctx);
   pipesDraw(ctx);
   drawGround(ctx);
   particlesDraw(ctx);
@@ -1360,20 +1679,22 @@ function gameLoop(timestamp) {
   const dt = Math.min(rawDt, C.MAX_DELTA);
   lastTimestamp = timestamp;
 
+  const frameStart = performance.now();
+  update(dt);
+  render();
+  const frameMs = performance.now() - frameStart;
+
+  // Always track frame performance (Analytics module batches internally)
+  Analytics.onFrame(frameMs);
+
   if (C.DEBUG) {
-    const frameStart = performance.now();
-    update(dt);
-    render();
-    _frameMs = performance.now() - frameStart;
+    _frameMs = frameMs;
     _fpsFrameCount++;
     if (timestamp - _fpsLastTime >= 1000) {
       _fpsDisplay = _fpsFrameCount;
       _fpsFrameCount = 0;
       _fpsLastTime = timestamp;
     }
-  } else {
-    update(dt);
-    render();
   }
 
   (window.requestAnimationFrame || ((cb) => setTimeout(cb, 16)))(gameLoop);

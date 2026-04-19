@@ -1,0 +1,19 @@
+{
+  "name": "flappy-aadhan-backend",
+  "version": "1.0.0",
+  "description": "Flappy Aadhan — Railway backend: scores, leaderboard, analytics",
+  "type": "module",
+  "main": "src/server.mjs",
+  "scripts": {
+    "start": "node src/server.mjs",
+    "dev": "node --watch src/server.mjs"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "better-sqlite3": "^9.6.0",
+    "zod": "^3.23.8"
+  }
+}

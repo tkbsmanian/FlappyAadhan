@@ -1,0 +1,11 @@
+# Netlify _headers file — fallback for edge cases where netlify.toml headers
+# don't apply (e.g. Netlify Edge Functions or branch deploys)
+
+/index.html
+  Cache-Control: no-cache, no-store, must-revalidate
+
+/assets/*
+  Cache-Control: public, max-age=31536000, immutable
+
+/*.woff2
+  Cache-Control: public, max-age=31536000, immutable

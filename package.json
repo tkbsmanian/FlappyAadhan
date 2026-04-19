@@ -1,0 +1,13 @@
+{
+  "name": "flappy-aadhan",
+  "version": "1.0.0",
+  "description": "Flappy Aadhan — retro browser game",
+  "private": true,
+  "scripts": {
+    "dev": "python3 -m http.server 8765",
+    "lint:perf": "node scripts/perf-check.mjs"
+  },
+  "devDependencies": {
+    "@netlify/plugin-lighthouse": "^4.0.0"
+  }
+}

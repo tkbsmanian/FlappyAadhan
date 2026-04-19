@@ -1,0 +1,59 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Flappy Aadhan — Netlify configuration
+# Deploy: push to main branch, or drag-drop the project folder to netlify.com
+# ─────────────────────────────────────────────────────────────────────────────
+
+[build]
+  publish = "."          # serve from repo root (no build step needed)
+  command = "node scripts/perf-check.mjs"   # fails deploy if perf thresholds breached
+
+[build.environment]
+  NODE_VERSION = "20"
+
+# ── Dev server (netlify dev) ──────────────────────────────────────────────────
+[dev]
+  command   = "python3 -m http.server 8765"
+  port      = 8765
+  targetPort = 8765
+
+# ── Production headers ────────────────────────────────────────────────────────
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Frame-Options           = "DENY"
+    X-Content-Type-Options    = "nosniff"
+    X-XSS-Protection          = "1; mode=block"
+    Referrer-Policy           = "strict-origin-when-cross-origin"
+    Permissions-Policy        = "camera=(), microphone=(), geolocation=()"
+    # connect-src includes fonts (fetch via CSS), Railway backend wildcard, and self
+    Content-Security-Policy   = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self' https://fonts.googleapis.com https://fonts.gstatic.com https://*.execute-api.*.amazonaws.com https://*.up.railway.app; frame-ancestors 'none'"
+
+# index.html — never cache (always fetch latest game version)
+[[headers]]
+  for = "/index.html"
+  [headers.values]
+    Cache-Control = "no-cache, no-store, must-revalidate"
+    Pragma        = "no-cache"
+
+# Game assets — cache 1 year (filenames are stable)
+[[headers]]
+  for = "/assets/*"
+  [headers.values]
+    Cache-Control = "public, max-age=31536000, immutable"
+
+# Fonts — cache 1 year
+[[headers]]
+  for = "/*.woff2"
+  [headers.values]
+    Cache-Control = "public, max-age=31536000, immutable"
+
+# ── Netlify plugin: performance monitoring ────────────────────────────────────
+[[plugins]]
+  package = "@netlify/plugin-lighthouse"
+
+  [plugins.inputs]
+    output_path = "reports/lighthouse.html"
+    # Audit the game page on every deploy
+    audits = [
+      { path = "/", thresholds = { performance = 0.9, accessibility = 0.8, best-practices = 0.9 } }
+    ]
