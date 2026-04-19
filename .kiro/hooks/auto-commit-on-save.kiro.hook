@@ -1,0 +1,16 @@
+{
+  "enabled": true,
+  "name": "Auto Commit on Save",
+  "description": "When any file is saved, stages it and creates a descriptive local commit based on the diff. Never pushes to remote.",
+  "version": "1",
+  "when": {
+    "type": "fileEdited",
+    "patterns": [
+      "*"
+    ]
+  },
+  "then": {
+    "type": "askAgent",
+    "prompt": "A file was just saved. Do the following:\n1. Run `git diff --staged` and `git diff` to see what changed\n2. Run `git add -A` to stage all changes\n3. Write a concise, descriptive commit message based on the actual diff (e.g. \"fix: correct terminal velocity clamp in impossible mode\" or \"feat: add laser recharge HUD indicator\")\n4. Run `git commit -m \"<your message>\"` to commit locally\n5. Do NOT run `git push` under any circumstances — never push to remote without explicit user approval\n6. Report back with the commit hash and message used"
+  }
+}

@@ -140,20 +140,29 @@ Input events are consumed by the state machine; a single keydown/click that trig
 
 ```js
 const ghosty = {
-  x, y,           // position (x is fixed horizontally)
-  vy,             // vertical velocity (px/s, scaled by dt)
-  rotation,       // radians, derived from vy
-  invincible,     // bool
-  invincibleTimer, // ms remaining
-  flashVisible,   // bool (for collision flash)
+  x, y,              // position (x is fixed horizontally)
+  vy,                // vertical velocity (px/s, scaled by dt)
+  animState,         // 'idle' | 'flap' | 'death'
+  animFrame,         // current frame index within the sheet
+  animTimer,         // ms elapsed in current frame
+  invincible,        // bool
+  invincibleTimer,   // ms remaining
+  flashVisible,      // bool (for collision flash)
 }
 
-function ghostyUpdate(dt)   // apply gravity, clamp terminal velocity, update position, update rotation
-function ghostyFlap()       // set vy = ASCENT_VELOCITY
-function ghostyReset()      // restore initial position/velocity
-function ghostyDraw(ctx)    // draw sprite (or fallback rect), apply rotation transform
-function ghostyHitbox()     // returns { x, y, w, h } inset by HITBOX_INSET
+function ghostyUpdate(dt)   // apply gravity, clamp terminal velocity, update position, advance animation state/frame
+function ghostyFlap()       // set vy = C.ASCENT_VELOCITY, transition animState to 'flap'
+function ghostyReset()      // restore initial position/velocity, reset animState to 'idle'
+function ghostyDraw(ctx)    // draw correct spritesheet frame (or fallback rect); skip if !flashVisible
+function ghostyHitbox()     // returns { x, y, w, h } inset by C.HITBOX_INSET
 ```
+
+**Animation state machine:**
+- `idle` → cycles frames `C.GHOSTY_IDLE_FRAMES` at `C.GHOSTY_IDLE_MS` per frame
+- `flap` → holds frame `C.GHOSTY_FLAP_FRAME` for `C.GHOSTY_FLAP_MS` ms, then returns to `idle`
+- `death` → plays frames `C.GHOSTY_DEATH_FRAMES` at `C.GHOSTY_DEATH_MS` per frame, holds on last frame
+
+Sprite rotation is **not used** — the spritesheet frames communicate movement state visually. See `ghosty-sprites.md` for full frame layout and hitbox specification.
 
 ### PipeManager
 
@@ -257,8 +266,17 @@ All values live in the `CONFIG` object in the `<script id="config">` block. The 
 | `PIPE_GAP_MIN_Y` | 80 | Minimum gap centre Y (px from top) |
 | `PIPE_GAP_MAX_Y` | 560 | Maximum gap centre Y (px from top) |
 | `GHOSTY_X` | 100 | Fixed horizontal position of Ghosty |
-| `GHOSTY_W` | 40 | Ghosty sprite width (px) |
-| `GHOSTY_H` | 40 | Ghosty sprite height (px) |
+| `GHOSTY_W` | 40 | Ghosty render width (px) |
+| `GHOSTY_H` | 40 | Ghosty render height (px) |
+| `GHOSTY_FRAME_W` | 32 | Source frame width in spritesheet (px) |
+| `GHOSTY_FRAME_H` | 32 | Source frame height in spritesheet (px) |
+| `GHOSTY_FRAME_COUNT` | 7 | Total frames in spritesheet |
+| `GHOSTY_IDLE_FRAMES` | [0,1,2] | Frame indices for idle animation |
+| `GHOSTY_FLAP_FRAME` | 3 | Frame index for flap |
+| `GHOSTY_DEATH_FRAMES` | [4,5,6] | Frame indices for death animation |
+| `GHOSTY_IDLE_MS` | 150 | Idle frame duration (ms) |
+| `GHOSTY_FLAP_MS` | 120 | Flap hold duration (ms) |
+| `GHOSTY_DEATH_MS` | 80 | Death frame duration (ms) |
 | `HITBOX_INSET` | 4 | Hitbox inset from sprite edges (px) |
 | `INVINCIBILITY_MS` | 500 | Invincibility window after collision (ms) |
 | `SHAKE_DURATION_MS` | 300 | Screen shake duration (ms) |
@@ -285,10 +303,12 @@ index.html?VOL_MUSIC=0&VOL_JUMP=0.8
 
 ```ts
 interface GhostyState {
-  x: number;           // fixed at GHOSTY_X
-  y: number;           // current vertical position (top of sprite)
-  vy: number;          // vertical velocity (px/s; negative = up)
-  rotation: number;    // radians; mapped from vy
+  x: number;              // fixed at C.GHOSTY_X
+  y: number;              // current vertical position (top of sprite)
+  vy: number;             // vertical velocity (px/s; negative = up)
+  animState: 'idle' | 'flap' | 'death';
+  animFrame: number;      // current frame index in spritesheet
+  animTimer: number;      // ms elapsed in current frame
   invincible: boolean;
   invincibleTimer: number; // ms
   flashVisible: boolean;
@@ -354,18 +374,36 @@ function ghostyUpdate(dt) {
     ghosty.flashVisible = Math.floor(ghosty.invincibleTimer / 80) % 2 === 0;
     if (ghosty.invincibleTimer <= 0) {
       ghosty.invincible = false;
-      // transition to GAME_OVER after flash completes
       transitionTo(State.GAME_OVER);
     }
   }
 
-  ghosty.vy += GRAVITY * dt;
-  ghosty.vy = Math.min(ghosty.vy, TERMINAL_VELOCITY);
+  ghosty.vy += C.GRAVITY * dt;
+  ghosty.vy = Math.min(ghosty.vy, C.TERMINAL_VELOCITY);
   ghosty.y += ghosty.vy * dt;
 
-  // Rotation: map vy range [-ASCENT_VELOCITY, TERMINAL_VELOCITY] to [-30°, 90°]
-  const t = (ghosty.vy - ASCENT_VELOCITY) / (TERMINAL_VELOCITY - ASCENT_VELOCITY);
-  ghosty.rotation = lerp(-Math.PI / 6, Math.PI / 2, clamp(t, 0, 1));
+  // Advance animation frame
+  ghosty.animTimer += dt * 1000;
+  if (ghosty.animState === 'idle') {
+    const frames = C.GHOSTY_IDLE_FRAMES;
+    if (ghosty.animTimer >= C.GHOSTY_IDLE_MS) {
+      ghosty.animTimer = 0;
+      ghosty.animFrame = frames[(frames.indexOf(ghosty.animFrame) + 1) % frames.length];
+    }
+  } else if (ghosty.animState === 'flap') {
+    if (ghosty.animTimer >= C.GHOSTY_FLAP_MS) {
+      ghosty.animState = 'idle';
+      ghosty.animTimer = 0;
+      ghosty.animFrame = C.GHOSTY_IDLE_FRAMES[0];
+    }
+  } else if (ghosty.animState === 'death') {
+    const frames = C.GHOSTY_DEATH_FRAMES;
+    const idx = frames.indexOf(ghosty.animFrame);
+    if (ghosty.animTimer >= C.GHOSTY_DEATH_MS && idx < frames.length - 1) {
+      ghosty.animTimer = 0;
+      ghosty.animFrame = frames[idx + 1]; // holds on last frame
+    }
+  }
 }
 ```
 

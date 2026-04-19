@@ -59,9 +59,11 @@ Flappy Kiro is a retro-styled, browser-based endless scroller game inspired by F
 
 1. WHEN the browser loads the Game, THE Game SHALL enter the `MENU` Game State and display the Start Screen on the Canvas.
 2. THE Start Screen SHALL display the game title "Flappy Kiro" in a retro font.
-3. THE Start Screen SHALL display an instruction prompt (e.g., "Press Space or Tap to Start").
+3. THE Start Screen SHALL display a PLAY button and a HIGH SCORES button, rendered on the canvas with AABB hit detection for click and touch events.
 4. THE Start Screen SHALL always display the Persistent High Score, loading it from `localStorage` on startup (showing 0 if none exists).
-5. WHEN the player presses the Space key or taps/clicks the Canvas on the Start Screen, THE Game SHALL transition to the `PLAYING` Game State.
+5. WHEN the player clicks/taps the PLAY button or presses the Space key, THE Game SHALL transition to the `PLAYING` Game State.
+6. WHEN the player clicks/taps the HIGH SCORES button, THE Game SHALL display the High Scores overlay showing the Persistent High Score.
+7. WHEN the High Scores overlay is open AND the player clicks/taps the CLOSE button or presses Escape, THE Game SHALL dismiss the overlay and return to the `MENU` state.
 
 ---
 
@@ -188,8 +190,9 @@ Flappy Kiro is a retro-styled, browser-based endless scroller game inspired by F
 3. THE Game Over Screen SHALL display the final Score achieved in the round.
 4. THE Game Over Screen SHALL display the current Persistent High Score.
 5. IF the final Score equals the Persistent High Score, THE Game Over Screen SHALL highlight this as a new best (e.g., "New Best!").
-6. THE Game Over Screen SHALL display a restart prompt (e.g., "Press Space or Tap to Restart").
-7. WHEN the player presses the Space key or taps/clicks the Canvas on the Game Over Screen, THE Game SHALL reset all game state (Score, Pipe Speed, Ghosty position/velocity, active Pipes) and transition to the `PLAYING` Game State.
+6. THE Game Over Screen SHALL display a RESTART button and a MAIN MENU button, rendered on the canvas with AABB hit detection.
+7. WHEN the player clicks/taps the RESTART button or presses Space, THE Game SHALL reset all game state (Score, Pipe Speed, Ghosty position/velocity, active Pipes) and transition to the `PLAYING` Game State.
+8. WHEN the player clicks/taps the MAIN MENU button, THE Game SHALL transition to the `MENU` Game State.
 
 ---
 

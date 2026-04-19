@@ -1,0 +1,16 @@
+{
+  "enabled": true,
+  "name": "Performance Static Check",
+  "description": "When index.html is saved, statically checks for patterns known to cause FPS drops: expensive operations in hot paths, unnecessary allocations, and rendering anti-patterns.",
+  "version": "1",
+  "when": {
+    "type": "fileEdited",
+    "patterns": [
+      "index.html"
+    ]
+  },
+  "then": {
+    "type": "askAgent",
+    "prompt": "index.html was just saved. Scan for patterns known to cause FPS drops and report only violations:\n\n**FPS / Game Loop**\n- Is dt clamped to C.MAX_DELTA before any physics calculation? (prevents spiral-of-death)\n- Is requestAnimationFrame used (not setInterval/setTimeout) for the main loop?\n- Is there a visibilitychange handler resetting lastTimestamp to prevent dt spikes on tab switch?\n- Does the PLAYING update branch have a guard after ghostyUpdate(dt) to break early on state transition?\n\n**Collision Detection Efficiency**\n- Is the invincibility early-return the first line of checkCollisions()? (skips all work most frames)\n- Are boundary checks (O(1)) before the pipe loop (O(n))?\n- Are pipe hitbox rects allocated as object literals inside the collision loop? (flag if yes — should be pre-allocated)\n\n**Rendering Anti-patterns**\n- Is ctx.shadowBlur set inside any per-frame loop? (forces compositing pass per call)\n- Is ctx.save/restore called per-item inside any loop rather than wrapping the whole pass?\n- Is ctx.fillStyle, ctx.font, or ctx.strokeStyle set redundantly inside a loop?\n- Are there any Date.now() calls inside render functions? (should use rAF timestamp)\n- Is ctx.roundRect used without a polyfill fallback? (unsupported in older browsers)\n\n**Memory**\n- Are object literals {} created inside update() or render() hot paths (outside scorePopups)?\n- Is particlesDraw setting fillStyle inside the particle loop rather than above it?\n\nOutput only violations with a one-line description. If none found, output \"✅ No performance issues detected\"."
+  }
+}

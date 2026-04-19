@@ -1,0 +1,51 @@
+{
+  "physics": {
+    "GRAVITY": 800,
+    "ASCENT_VELOCITY": -300,
+    "TERMINAL_VELOCITY": 700
+  },
+  "pipes": {
+    "PIPE_SPEED_INITIAL": 120,
+    "PIPE_SPEED_INCREMENT": 20,
+    "PIPE_SPEED_MAX": 400,
+    "PIPE_SPEED_THRESHOLD": 5,
+    "PIPE_WIDTH": 52,
+    "PIPE_GAP": 140,
+    "PIPE_PAIR_SPACING": 350,
+    "PIPE_GAP_MIN_Y": 80,
+    "PIPE_GAP_MAX_Y": 560
+  },
+  "canvas": {
+    "CANVAS_W": 480,
+    "CANVAS_H": 640
+  },
+  "ghosty": {
+    "GHOSTY_X": 100,
+    "GHOSTY_W": 40,
+    "GHOSTY_H": 40,
+    "HITBOX_INSET": 4
+  },
+  "collision": {
+    "INVINCIBILITY_MS": 500
+  },
+  "effects": {
+    "SHAKE_DURATION_MS": 300,
+    "SHAKE_MAGNITUDE": 8,
+    "PARTICLE_LIFESPAN": 30,
+    "PARTICLE_COUNT": 3,
+    "POPUP_DURATION_MS": 600
+  },
+  "clouds": {
+    "CLOUD_SPEED_FAR": 0.3,
+    "CLOUD_SPEED_NEAR": 0.7
+  },
+  "audio": {
+    "VOL_JUMP": 0.4,
+    "VOL_GAME_OVER": 0.6,
+    "VOL_SCORE_BEEP": 0.3,
+    "VOL_MUSIC": 0.15
+  },
+  "loop": {
+    "MAX_DELTA": 0.1
+  }
+}

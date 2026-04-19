@@ -1,0 +1,13 @@
+{
+  "enabled": true,
+  "name": "Game Standards Review",
+  "description": "Manually triggered review of index.html against game coding standards: naming conventions, Canvas API patterns, memory management, event handling, and collision detection algorithms.",
+  "version": "1",
+  "when": {
+    "type": "userTriggered"
+  },
+  "then": {
+    "type": "askAgent",
+    "prompt": "Review index.html against the Flappy Kiro coding standards defined in .kiro/steering/game-coding-standards.md. Check each of the following and report violations with line references:\n\n**Naming Conventions**\n- Config constants use UPPER_SNAKE_CASE and are accessed via C.CONSTANT_NAME (no raw numeric literals in game logic)\n- Game state variables use camelCase\n- Component functions follow componentVerb pattern (e.g. ghostyUpdate, pipesDraw)\n- Boolean flags use is/has prefix\n- Timer variables use *Timer suffix\n\n**Canvas API Patterns**\n- ctx.save/restore not called inside tight loops (should wrap the whole pass, not per-item)\n- fillStyle/strokeStyle/font set once before loops, not inside them\n- ctx.shadowBlur not used in hot paths (per-frame loops)\n- ctx.imageSmoothingEnabled = false set after canvas resize\n- drawImage uses correct argument count (9-arg for spritesheet, 5-arg for full image)\n\n**Memory Management**\n- No object literals {} or array literals [] allocated inside update() or render() hot paths\n- No Array.push/pop/shift/splice inside the game loop (except scorePopups which is exempt)\n- Pipe and particle pools used correctly (no new allocations per frame)\n\n**Event Handling**\n- All input funnels through handleInput()\n- No direct DOM manipulation inside game loop\n- touchstart has { passive: false } and calls preventDefault()\n\n**Architecture**\n- update functions do not call draw functions and vice versa\n- transitionTo() used for all state changes (no direct currentState assignment)\n- All components have Reset() functions called in enterState(PLAYING)\n- Guard after ghostyUpdate(dt) in PLAYING branch prevents post-transition code running\n\nReport: ✅ PASS or ❌ FAIL with specific line numbers for each category. Summarise total violations at the end."
+  }
+}

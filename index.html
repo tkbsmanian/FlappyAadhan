@@ -1,0 +1,1390 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Flappy Kiro</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      background: #000;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 100vw;
+      height: 100vh;
+      overflow: hidden;
+    }
+
+    #wrapper {
+      position: relative;
+      width: 480px;
+      height: 640px;
+      max-width: 100vw;
+      max-height: 100vh;
+      aspect-ratio: 480 / 640;
+      /* Scale to fit viewport while preserving aspect ratio */
+      container-type: size;
+    }
+
+    @media (max-aspect-ratio: 480/640) {
+      #wrapper {
+        width: 100vw;
+        height: calc(100vw * 640 / 480);
+      }
+    }
+
+    @media (min-aspect-ratio: 480/640) {
+      #wrapper {
+        height: 100vh;
+        width: calc(100vh * 480 / 640);
+      }
+    }
+
+    #game {
+      display: block;
+      width: 100%;
+      height: 100%;
+      image-rendering: pixelated;
+      image-rendering: crisp-edges;
+    }
+  </style>
+</head>
+<body>
+
+<!-- TOP OF index.html — edit these values to tune the game -->
+<script id="config">
+const CONFIG = {
+  // Canvas
+  CANVAS_W: 480,
+  CANVAS_H: 640,
+
+  // Physics
+  GRAVITY: 800,
+  ASCENT_VELOCITY: -300,
+  TERMINAL_VELOCITY: 700,
+  MAX_DELTA: 0.1,
+
+  // Pipes
+  PIPE_SPEED_INITIAL: 120,
+  PIPE_SPEED_INCREMENT: 20,
+  PIPE_SPEED_MAX: 400,
+  PIPE_SPEED_THRESHOLD: 5,
+  PIPE_WIDTH: 52,
+  PIPE_GAP: 140,
+  PIPE_PAIR_SPACING: 350,
+  PIPE_GAP_MIN_Y: 80,
+  PIPE_GAP_MAX_Y: 560,
+  PIPE_POOL_SIZE: 8,
+
+  // Ghosty
+  GHOSTY_X: 100,
+  GHOSTY_W: 40,
+  GHOSTY_H: 40,
+  GHOSTY_FRAME_W: 32,
+  GHOSTY_FRAME_H: 32,
+  GHOSTY_FRAME_COUNT: 7,
+  GHOSTY_IDLE_FRAMES: [0, 1, 2],
+  GHOSTY_FLAP_FRAME: 3,
+  GHOSTY_DEATH_FRAMES: [4, 5, 6],
+  GHOSTY_IDLE_MS: 150,
+  GHOSTY_FLAP_MS: 120,
+  GHOSTY_DEATH_MS: 80,
+
+  // Collision
+  HITBOX_INSET: 4,
+  INVINCIBILITY_MS: 500,
+
+  // Effects
+  SHAKE_DURATION_MS: 300,
+  SHAKE_MAGNITUDE: 8,
+  PARTICLE_LIFESPAN: 30,
+  PARTICLE_COUNT: 3,
+  POPUP_DURATION_MS: 600,
+
+  // Clouds
+  CLOUD_SPEED_FAR: 0.15,
+  CLOUD_SPEED_NEAR: 0.55,
+  CLOUD_ALPHA_FAR: 0.2,
+  CLOUD_ALPHA_NEAR: 0.55,
+
+  // Ground
+  GROUND_HEIGHT: 32,
+
+  // Impossible Mode
+  GATE_SPAWN_CHANCE: 0.3,
+  GATE_WIDTH: 20,
+  GATE_HEIGHT: 80,
+  IMPOSSIBLE_DURATION: 10000,
+  COLOUR_GATE: '#FF3333',
+  COLOUR_GATE_GLOW: '#FF8888',
+
+  // Laser
+  LASER_RECHARGE_MS: 20000,   // recharge time in ms
+  LASER_HOLE_HEIGHT: 60,      // height of hole carved in pipe (px)
+  LASER_BEAM_DURATION: 400,   // how long the beam visual lasts (ms)
+  COLOUR_LASER: '#00FFFF',    // beam colour
+
+  // Audio
+  VOL_JUMP: 0.4,
+  VOL_GAME_OVER: 0.6,
+  VOL_SCORE_BEEP: 0.3,
+  VOL_MUSIC: 0.15,
+
+  // Colours
+  COLOUR_SKY: '#1A1A2E',
+  COLOUR_PIPE: '#388E3C',
+  COLOUR_PIPE_BORDER: '#1B5E20',
+  COLOUR_GROUND: '#5D4037',
+  COLOUR_GROUND_TOP: '#4CAF50',
+  COLOUR_PARTICLE: 'rgba(200,230,255,0.8)',
+
+  // Font
+  FONT_FAMILY: 'Press Start 2P',
+
+  // Debug
+  DEBUG: false, // set to true via URL: ?DEBUG=1
+};
+</script>
+
+<div id="wrapper">
+  <canvas id="game"></canvas>
+</div>
+
+<script type="module" id="game-logic">
+const ConfigLoader = {
+  load(defaults) {
+    const params = new URLSearchParams(window.location.search);
+    const overrides = {};
+    for (const [key, value] of params) {
+      if (!(key in defaults)) continue;
+      if (Array.isArray(defaults[key])) continue; // arrays not overridable via URL
+      const n = Number(value);
+      if (isFinite(n)) overrides[key] = n;
+    }
+    return { ...defaults, ...overrides };
+  }
+};
+
+const C = Object.freeze(ConfigLoader.load(CONFIG));
+
+// --- 3.1 HiDPI canvas sizing ---
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+
+function resizeCanvas() {
+  const dpr = window.devicePixelRatio || 1;
+  canvas.width  = C.CANVAS_W * dpr;
+  canvas.height = C.CANVAS_H * dpr;
+  ctx.scale(dpr, dpr);
+  ctx.imageSmoothingEnabled = false;
+}
+resizeCanvas();
+
+// --- Stubs (replaced by real implementations in later tasks) ---
+let score = 0;
+
+// --- 15. AudioManager ---
+let audioCtx = null;
+let jumpBuffer = null;
+let gameOverBuffer = null;
+let bgGainNode = null;
+let bgOscillators = [];
+let bgScheduled = false;
+
+function audioInit() {
+  if (audioCtx) return;
+  try {
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    loadAudioBuffer('assets/jump.wav').then(buf => { jumpBuffer = buf; });
+    loadAudioBuffer('assets/game_over.wav').then(buf => { gameOverBuffer = buf; });
+  } catch (e) {
+    console.warn('[AudioManager] Web Audio API unavailable');
+  }
+}
+
+async function loadAudioBuffer(url) {
+  try {
+    const response = await fetch(url);
+    const arrayBuffer = await response.arrayBuffer();
+    return await audioCtx.decodeAudioData(arrayBuffer);
+  } catch (e) {
+    console.warn(`[AudioManager] Failed to load ${url} — using synthesis fallback`);
+    return null;
+  }
+}
+
+function playBuffer(buffer, volume) {
+  if (!audioCtx || !buffer) return;
+  const source = audioCtx.createBufferSource();
+  const gain = audioCtx.createGain();
+  source.buffer = buffer;
+  gain.gain.setValueAtTime(volume, audioCtx.currentTime);
+  source.connect(gain);
+  gain.connect(audioCtx.destination);
+  source.start(audioCtx.currentTime);
+}
+
+function audioPlayJump() {
+  if (!audioCtx) return;
+  if (jumpBuffer) {
+    playBuffer(jumpBuffer, C.VOL_JUMP);
+  } else {
+    // Synthesis fallback: rising sine sweep
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    osc.connect(gain); gain.connect(audioCtx.destination);
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(800, audioCtx.currentTime);
+    osc.frequency.linearRampToValueAtTime(1200, audioCtx.currentTime + 0.08);
+    gain.gain.setValueAtTime(C.VOL_JUMP, audioCtx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.1);
+    osc.start(audioCtx.currentTime);
+    osc.stop(audioCtx.currentTime + 0.1);
+  }
+}
+
+function audioPlayGameOver() {
+  if (!audioCtx) return;
+  if (gameOverBuffer) {
+    playBuffer(gameOverBuffer, C.VOL_GAME_OVER);
+  } else {
+    // Synthesis fallback: low-pass noise burst
+    const bufferSize = Math.floor(audioCtx.sampleRate * 0.3);
+    const buffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
+    const data = buffer.getChannelData(0);
+    for (let i = 0; i < bufferSize; i++) {
+      data[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / bufferSize, 3);
+    }
+    const source = audioCtx.createBufferSource();
+    const gain = audioCtx.createGain();
+    const filter = audioCtx.createBiquadFilter();
+    source.buffer = buffer;
+    filter.type = 'lowpass';
+    filter.frequency.setValueAtTime(400, audioCtx.currentTime);
+    source.connect(filter); filter.connect(gain); gain.connect(audioCtx.destination);
+    gain.gain.setValueAtTime(C.VOL_GAME_OVER, audioCtx.currentTime);
+    source.start(audioCtx.currentTime);
+  }
+}
+
+function audioPlayScoreBeep() {
+  if (!audioCtx) return;
+  const osc = audioCtx.createOscillator();
+  const gain = audioCtx.createGain();
+  osc.connect(gain); gain.connect(audioCtx.destination);
+  osc.type = 'sine';
+  osc.frequency.setValueAtTime(1046, audioCtx.currentTime);
+  gain.gain.setValueAtTime(0.001, audioCtx.currentTime);
+  gain.gain.linearRampToValueAtTime(C.VOL_SCORE_BEEP, audioCtx.currentTime + 0.005);
+  gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.2);
+  osc.start(audioCtx.currentTime);
+  osc.stop(audioCtx.currentTime + 0.2);
+}
+
+function scheduleMusicLoop(startTime) {
+  if (!audioCtx || !bgGainNode) return;
+  const notes = [
+    [523, 0.25], [659, 0.25], [784, 0.25], [659, 0.25],
+    [523, 0.25], [392, 0.5],  [440, 0.25], [523, 0.25],
+    [659, 0.5],  [587, 0.25], [523, 0.25], [392, 0.5],
+  ];
+  let t = startTime;
+  for (const [freq, dur] of notes) {
+    const osc = audioCtx.createOscillator();
+    osc.type = 'square';
+    osc.frequency.setValueAtTime(freq, t);
+    osc.connect(bgGainNode);
+    osc.start(t);
+    osc.stop(t + dur * 0.9);
+    bgOscillators.push(osc);
+    t += dur;
+  }
+  return t; // loop end time
+}
+
+function audioBgStart() {
+  if (!audioCtx || bgScheduled) return;
+  bgGainNode = audioCtx.createGain();
+  bgGainNode.gain.setValueAtTime(C.VOL_MUSIC, audioCtx.currentTime);
+  bgGainNode.connect(audioCtx.destination);
+  bgScheduled = true;
+
+  let loopStart = audioCtx.currentTime;
+  function scheduleNext() {
+    if (!bgScheduled) return;
+    const loopEnd = scheduleMusicLoop(loopStart);
+    loopStart = loopEnd;
+    setTimeout(scheduleNext, (loopEnd - audioCtx.currentTime - 0.1) * 1000);
+  }
+  scheduleNext();
+}
+
+function audioBgPause() {
+  if (!audioCtx) return;
+  audioCtx.suspend();
+}
+
+function audioBgResume() {
+  if (!audioCtx) return;
+  audioCtx.resume();
+}
+
+function audioBgStop() {
+  bgScheduled = false;
+  for (const osc of bgOscillators) {
+    try { osc.stop(); } catch (e) {}
+  }
+  bgOscillators = [];
+  if (bgGainNode) {
+    bgGainNode.disconnect();
+    bgGainNode = null;
+  }
+}
+
+// --- 5.1 StorageManager ---
+const STORAGE_KEY = 'flappyKiroHighScore';
+let inMemoryHighScore = 0;
+
+function storageGetHighScore() {
+  try {
+    const val = localStorage.getItem(STORAGE_KEY);
+    return val !== null ? parseInt(val, 10) : inMemoryHighScore;
+  } catch (e) {
+    return inMemoryHighScore;
+  }
+}
+
+function storageSetHighScore(n) {
+  inMemoryHighScore = Math.max(inMemoryHighScore, n);
+  try {
+    localStorage.setItem(STORAGE_KEY, String(inMemoryHighScore));
+  } catch (e) {
+    // localStorage unavailable — in-memory fallback already updated
+  }
+}
+
+// Load persisted high score on startup
+inMemoryHighScore = storageGetHighScore();
+
+// --- 6. Ghosty ---
+const ghostyImage = new Image();
+let ghostyImageLoaded = false;
+ghostyImage.onload  = () => { ghostyImageLoaded = true; };
+ghostyImage.onerror = () => { console.warn('[Ghosty] sprite failed to load — using fallback'); };
+ghostyImage.src = 'assets/ghosty.png';
+
+const ghosty = {
+  x: C.GHOSTY_X,
+  y: C.CANVAS_H / 2 - C.GHOSTY_H / 2,
+  vy: 0,
+  animState: 'idle',   // 'idle' | 'flap' | 'death'
+  animFrame: C.GHOSTY_IDLE_FRAMES[0],
+  animTimer: 0,
+  invincible: false,
+  invincibleTimer: 0,
+  flashVisible: true,
+};
+
+function ghostyReset() {
+  ghosty.x = C.GHOSTY_X;
+  ghosty.y = C.CANVAS_H / 2 - C.GHOSTY_H / 2;
+  ghosty.vy = 0;
+  ghosty.animState = 'idle';
+  ghosty.animFrame = C.GHOSTY_IDLE_FRAMES[0];
+  ghosty.animTimer = 0;
+  ghosty.invincible = false;
+  ghosty.invincibleTimer = 0;
+  ghosty.flashVisible = true;
+}
+
+function ghostyFlap() {
+  // In impossible mode (gravity flipped), flap pushes downward
+  ghosty.vy = impossibleActive ? -C.ASCENT_VELOCITY : C.ASCENT_VELOCITY;
+  ghosty.animState = 'flap';
+  ghosty.animFrame = C.GHOSTY_FLAP_FRAME;
+  ghosty.animTimer = 0;
+  audioPlayJump();
+  particlesEmit(ghosty.x, ghosty.y + C.GHOSTY_H / 2);
+}
+
+function ghostyUpdate(dt) {
+  // Invincibility timer
+  if (ghosty.invincible) {
+    ghosty.invincibleTimer -= dt * 1000;
+    ghosty.flashVisible = Math.floor(ghosty.invincibleTimer / 80) % 2 === 0;
+    if (ghosty.invincibleTimer <= 0) {
+      ghosty.invincible = false;
+      ghosty.flashVisible = true;
+      transitionTo(State.GAME_OVER);
+      return;
+    }
+  }
+
+  // Physics — gravity flips in impossible mode
+  const gravity = impossibleActive ? -C.GRAVITY : C.GRAVITY;
+  ghosty.vy += gravity * dt;
+  // Clamp velocity in both directions regardless of mode
+  ghosty.vy = Math.max(-C.TERMINAL_VELOCITY, Math.min(C.TERMINAL_VELOCITY, ghosty.vy));
+  ghosty.y += ghosty.vy * dt;
+
+  // Animation state machine
+  ghosty.animTimer += dt * 1000;
+  if (ghosty.animState === 'idle') {
+    if (ghosty.animTimer >= C.GHOSTY_IDLE_MS) {
+      ghosty.animTimer -= C.GHOSTY_IDLE_MS;
+      const frames = C.GHOSTY_IDLE_FRAMES;
+      const idx = Math.max(0, frames.indexOf(ghosty.animFrame));
+      ghosty.animFrame = frames[(idx + 1) % frames.length];
+    }
+  } else if (ghosty.animState === 'flap') {
+    if (ghosty.animTimer >= C.GHOSTY_FLAP_MS) {
+      ghosty.animState = 'idle';
+      ghosty.animTimer = 0;
+      ghosty.animFrame = C.GHOSTY_IDLE_FRAMES[0];
+    }
+  } else if (ghosty.animState === 'death') {
+    const frames = C.GHOSTY_DEATH_FRAMES;
+    const idx = Math.max(0, frames.indexOf(ghosty.animFrame));
+    if (ghosty.animTimer >= C.GHOSTY_DEATH_MS && idx < frames.length - 1) {
+      ghosty.animTimer -= C.GHOSTY_DEATH_MS;
+      ghosty.animFrame = frames[idx + 1];
+    }
+  }
+}
+
+function ghostyHitbox() {
+  return {
+    x: ghosty.x + C.HITBOX_INSET,
+    y: ghosty.y + C.HITBOX_INSET,
+    w: C.GHOSTY_W - 2 * C.HITBOX_INSET,
+    h: C.GHOSTY_H - 2 * C.HITBOX_INSET,
+  };
+}
+
+function ghostyDraw(ctx) {
+  if (ghosty.invincible && !ghosty.flashVisible) return;
+
+  if (ghostyImageLoaded) {
+    // Use spritesheet frame if image is wide enough, otherwise draw full image
+    const isSheet = ghostyImage.naturalWidth >= C.GHOSTY_FRAME_W * 2;
+    if (isSheet) {
+      ctx.drawImage(
+        ghostyImage,
+        ghosty.animFrame * C.GHOSTY_FRAME_W, 0,
+        C.GHOSTY_FRAME_W, C.GHOSTY_FRAME_H,
+        Math.round(ghosty.x), Math.round(ghosty.y),
+        C.GHOSTY_W, C.GHOSTY_H
+      );
+    } else {
+      ctx.drawImage(
+        ghostyImage,
+        Math.round(ghosty.x), Math.round(ghosty.y),
+        C.GHOSTY_W, C.GHOSTY_H
+      );
+    }
+  } else {
+    // Fallback: bright ghost shape so it's visible on dark background
+    ctx.fillStyle = '#A0C8FF';
+    ctx.beginPath();
+    ctx.arc(ghosty.x + C.GHOSTY_W / 2, ghosty.y + C.GHOSTY_H / 3, C.GHOSTY_W / 2, Math.PI, 0);
+    ctx.lineTo(ghosty.x + C.GHOSTY_W, ghosty.y + C.GHOSTY_H);
+    ctx.lineTo(ghosty.x, ghosty.y + C.GHOSTY_H);
+    ctx.closePath();
+    ctx.fill();
+  }
+
+  if (C.DEBUG) {
+    const hb = ghostyHitbox();
+    ctx.strokeStyle = 'rgba(255,0,0,0.7)';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(hb.x, hb.y, hb.w, hb.h);
+  }
+}
+
+// --- 9. Progressive difficulty ---
+function currentPipeSpeed() {
+  const steps = Math.floor(score / C.PIPE_SPEED_THRESHOLD);
+  return Math.min(
+    C.PIPE_SPEED_INITIAL + steps * C.PIPE_SPEED_INCREMENT,
+    C.PIPE_SPEED_MAX
+  );
+}
+
+// --- 8. PipeManager ---
+const pipePool = Array.from({ length: C.PIPE_POOL_SIZE },
+  () => ({ x: 0, gapY: 0, scored: false, active: false }));
+
+function randomGapY() {
+  const range = C.PIPE_GAP_MAX_Y - C.PIPE_GAP_MIN_Y;
+  return C.PIPE_GAP_MIN_Y + Math.random() * range;
+}
+
+function spawnPipe() {
+  const pipe = pipePool.find(p => !p.active);
+  if (!pipe) return;
+  pipe.x = C.CANVAS_W + C.PIPE_WIDTH;
+  pipe.gapY = randomGapY();
+  pipe.scored = false;
+  pipe.active = true;
+  spawnGate(pipe.x, pipe.gapY); // maybe spawn a gate near this pipe
+}
+
+function shouldSpawnPipe() {
+  let rightmostX = -Infinity;
+  for (const pipe of pipePool) {
+    if (pipe.active && pipe.x > rightmostX) rightmostX = pipe.x;
+  }
+  return rightmostX <= C.CANVAS_W - C.PIPE_PAIR_SPACING;
+}
+
+function pipesUpdate(dt) {
+  const speed = currentPipeSpeed();
+
+  for (const pipe of pipePool) {
+    if (!pipe.active) continue;
+    pipe.x -= speed * dt;
+
+    // Score check — Ghosty's centre passes pipe's right edge
+    if (!pipe.scored && ghosty.x + C.GHOSTY_W / 2 > pipe.x + C.PIPE_WIDTH) {
+      pipe.scored = true;
+      score++;
+      audioPlayScoreBeep();
+      effectsSpawnPopup(pipe.x + C.PIPE_WIDTH / 2, pipe.gapY);
+    }
+
+    // Cull off-screen pipes
+    if (pipe.x + C.PIPE_WIDTH < 0) pipe.active = false;
+  }
+
+  if (shouldSpawnPipe()) spawnPipe();
+}
+
+function pipesDraw(ctx) {
+  const halfGap = C.PIPE_GAP / 2;
+
+  // Draw pipe bodies — set fillStyle once before loop
+  ctx.fillStyle = C.COLOUR_PIPE;
+  for (const pipe of pipePool) {
+    if (!pipe.active) continue;
+    // Top pipe
+    ctx.fillRect(pipe.x, 0, C.PIPE_WIDTH, pipe.gapY - halfGap);
+    // Bottom pipe
+    ctx.fillRect(pipe.x, pipe.gapY + halfGap, C.PIPE_WIDTH, C.CANVAS_H);
+  }
+
+  // Draw pipe edge highlights — set fillStyle once
+  ctx.fillStyle = C.COLOUR_PIPE_BORDER;
+  for (const pipe of pipePool) {
+    if (!pipe.active) continue;
+    // Right edge highlight on top pipe
+    ctx.fillRect(pipe.x + C.PIPE_WIDTH - 4, 0, 4, pipe.gapY - halfGap);
+    // Right edge highlight on bottom pipe
+    ctx.fillRect(pipe.x + C.PIPE_WIDTH - 4, pipe.gapY + halfGap, 4, C.CANVAS_H);
+  }
+
+  if (C.DEBUG) {
+    ctx.strokeStyle = 'rgba(255,165,0,0.5)';
+    ctx.lineWidth = 1;
+    for (const pipe of pipePool) {
+      if (!pipe.active) continue;
+      ctx.strokeRect(pipe.x, 0, C.PIPE_WIDTH, pipe.gapY - halfGap);
+      ctx.strokeRect(pipe.x, pipe.gapY + halfGap, C.PIPE_WIDTH, C.CANVAS_H);
+    }
+  }
+}
+
+function pipesReset() {
+  for (const pipe of pipePool) pipe.active = false;
+  score = 0;
+}
+
+// --- Impossible Mode ---
+let impossibleActive = false;
+let impossibleTimer = 0; // ms remaining
+
+// Gate pool — one gate per pipe slot max
+const gatePool = Array.from({ length: C.PIPE_POOL_SIZE },
+  () => ({ x: 0, gapY: 0, active: false, scored: false }));
+
+function gatesReset() {
+  for (const g of gatePool) g.active = false;
+  impossibleActive = false;
+  impossibleTimer = 0;
+}
+
+function spawnGate(pipeX, pipeGapY) {
+  if (Math.random() > C.GATE_SPAWN_CHANCE) return;
+  const gate = gatePool.find(g => !g.active);
+  if (!gate) return;
+  // Place gate halfway between this pipe and the next
+  gate.x = pipeX + C.PIPE_PAIR_SPACING / 2;
+  gate.gapY = pipeGapY; // centre on same gap as the pipe
+  gate.active = true;
+  gate.scored = false;
+}
+
+function gatesUpdate(dt) {
+  const speed = currentPipeSpeed();
+  for (const gate of gatePool) {
+    if (!gate.active) continue;
+    gate.x -= speed * dt;
+
+    // Check if Ghosty passes through the gate opening
+    if (!gate.scored) {
+      const hb = ghostyHitbox();
+      const gateLeft  = gate.x;
+      const gateRight = gate.x + C.GATE_WIDTH;
+      const gateTop   = gate.gapY - C.GATE_HEIGHT / 2;
+      const gateBot   = gate.gapY + C.GATE_HEIGHT / 2;
+
+      // Ghosty centre has crossed the gate
+      const ghostyCentreX = ghosty.x + C.GHOSTY_W / 2;
+      if (ghostyCentreX > gateLeft && ghostyCentreX < gateRight + 10) {
+        // Check vertical overlap with the opening
+        const ghostyCentreY = ghosty.y + C.GHOSTY_H / 2;
+        if (ghostyCentreY > gateTop && ghostyCentreY < gateBot) {
+          gate.scored = true;
+          impossibleActive = true;
+          impossibleTimer = C.IMPOSSIBLE_DURATION;
+        }
+      }
+    }
+
+    if (gate.x + C.GATE_WIDTH < 0) gate.active = false;
+  }
+
+  // Tick impossible mode timer
+  if (impossibleActive) {
+    impossibleTimer -= dt * 1000;
+    if (impossibleTimer <= 0) {
+      impossibleTimer = 0;
+      impossibleActive = false;
+    }
+  }
+}
+
+function gatesDraw(ctx) {
+  for (const gate of gatePool) {
+    if (!gate.active) continue;
+    const gateTop = gate.gapY - C.GATE_HEIGHT / 2;
+    const gateBot = gate.gapY + C.GATE_HEIGHT / 2;
+
+    // Glow effect
+    ctx.save();
+    ctx.shadowColor = C.COLOUR_GATE_GLOW;
+    ctx.shadowBlur = 12;
+
+    // Top bar (above opening)
+    ctx.fillStyle = C.COLOUR_GATE;
+    ctx.fillRect(gate.x, 0, C.GATE_WIDTH, gateTop);
+    // Bottom bar (below opening)
+    ctx.fillRect(gate.x, gateBot, C.GATE_WIDTH, C.CANVAS_H);
+
+    // Opening highlight lines
+    ctx.fillStyle = C.COLOUR_GATE_GLOW;
+    ctx.fillRect(gate.x, gateTop - 3, C.GATE_WIDTH, 3);
+    ctx.fillRect(gate.x, gateBot, C.GATE_WIDTH, 3);
+
+    ctx.restore();
+  }
+}
+
+// --- Laser ---
+let laserRechargeTimer = 0;   // ms until ready (0 = ready)
+let laserBeamTimer    = 0;    // ms of beam visual remaining
+let laserBeamY        = 0;    // y position of beam when fired
+
+function laserReset() {
+  laserRechargeTimer = 0;
+  laserBeamTimer = 0;
+}
+
+function laserFire() {
+  if (laserRechargeTimer > 0) return; // still recharging
+  if (currentState !== State.PLAYING) return;
+
+  laserBeamY = ghosty.y + C.GHOSTY_H / 2;
+  laserBeamTimer = C.LASER_BEAM_DURATION;
+  laserRechargeTimer = C.LASER_RECHARGE_MS;
+
+  // Carve a hole in every active pipe the beam hits
+  for (const pipe of pipePool) {
+    if (!pipe.active) continue;
+    if (pipe.x > C.CANVAS_W) continue; // off right edge, not yet on screen
+
+    const halfGap = C.PIPE_GAP / 2;
+    const topPipeBottom = pipe.gapY - halfGap;
+    const botPipeTop    = pipe.gapY + halfGap;
+
+    // Hit top pipe?
+    if (laserBeamY < topPipeBottom) {
+      // Widen the gap upward by carving into the top pipe
+      pipe.gapY -= C.LASER_HOLE_HEIGHT / 2;
+      // Clamp so gap stays on screen
+      pipe.gapY = Math.max(pipe.gapY, C.PIPE_GAP_MIN_Y);
+    }
+    // Hit bottom pipe?
+    else if (laserBeamY > botPipeTop) {
+      pipe.gapY += C.LASER_HOLE_HEIGHT / 2;
+      pipe.gapY = Math.min(pipe.gapY, C.PIPE_GAP_MAX_Y);
+    }
+  }
+}
+
+function laserUpdate(dt) {
+  if (laserRechargeTimer > 0) laserRechargeTimer = Math.max(0, laserRechargeTimer - dt * 1000);
+  if (laserBeamTimer > 0)     laserBeamTimer     = Math.max(0, laserBeamTimer     - dt * 1000);
+}
+
+function laserDraw(ctx) {
+  // Draw beam if active
+  if (laserBeamTimer > 0) {
+    const alpha = laserBeamTimer / C.LASER_BEAM_DURATION;
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.strokeStyle = C.COLOUR_LASER;
+    ctx.lineWidth = 3;
+    ctx.shadowColor = C.COLOUR_LASER;
+    ctx.shadowBlur = 10;
+    ctx.beginPath();
+    ctx.moveTo(ghosty.x + C.GHOSTY_W, laserBeamY);
+    ctx.lineTo(C.CANVAS_W, laserBeamY);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  // HUD — bottom-left recharge indicator
+  const ready = laserRechargeTimer <= 0;
+  const bx = 10, by = C.CANVAS_H - 36, bw = 140, bh = 22;
+
+  ctx.save();
+  // Background pill
+  ctx.fillStyle = ready ? 'rgba(0,255,200,0.25)' : 'rgba(0,0,0,0.45)';
+  ctx.beginPath();
+  ctx.roundRect(bx, by, bw, bh, 4);
+  ctx.fill();
+
+  if (ready) {
+    // Pulsing "LASER READY" text
+    ctx.globalAlpha = 0.7 + 0.3 * Math.sin(Date.now() / 200);
+    ctx.fillStyle = C.COLOUR_LASER;
+    ctx.font = `8px "${C.FONT_FAMILY}"`;
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('LASER READY [L]', bx + 6, by + bh / 2);
+  } else {
+    // Recharge progress bar
+    const progress = 1 - laserRechargeTimer / C.LASER_RECHARGE_MS;
+    ctx.fillStyle = 'rgba(0,200,255,0.4)';
+    ctx.beginPath();
+    ctx.roundRect(bx, by, bw * progress, bh, 4);
+    ctx.fill();
+
+    const secs = Math.ceil(laserRechargeTimer / 1000);
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = '#AAAAAA';
+    ctx.font = `8px "${C.FONT_FAMILY}"`;
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(`LASER ${secs}s`, bx + 6, by + bh / 2);
+  }
+  ctx.restore();
+}
+
+// --- 10. Collision detection ---
+function rectsOverlap(a, b) {
+  return a.x < b.x + b.w &&
+         a.x + a.w > b.x &&
+         a.y < b.y + b.h &&
+         a.y + a.h > b.y;
+}
+
+function triggerCollision() {
+  ghosty.invincible = true;
+  ghosty.invincibleTimer = C.INVINCIBILITY_MS;
+  ghosty.animState = 'death';
+  ghosty.animFrame = C.GHOSTY_DEATH_FRAMES[0];
+  ghosty.animTimer = 0;
+  effectsTriggerShake();
+  audioPlayGameOver();
+}
+
+function checkCollisions() {
+  if (ghosty.invincible) return;
+
+  const hb = ghostyHitbox();
+
+  // Ground and ceiling (O(1))
+  if (hb.y + hb.h >= C.CANVAS_H - C.GROUND_HEIGHT || hb.y <= 0) {
+    triggerCollision();
+    return;
+  }
+
+  // Pipes (O(n), n ≤ 8)
+  const halfGap = C.PIPE_GAP / 2;
+  for (const pipe of pipePool) {
+    if (!pipe.active) continue;
+    const topRect    = { x: pipe.x, y: 0,                            w: C.PIPE_WIDTH, h: pipe.gapY - halfGap };
+    const bottomRect = { x: pipe.x, y: pipe.gapY + halfGap,           w: C.PIPE_WIDTH, h: C.CANVAS_H - (pipe.gapY + halfGap) };
+    if (rectsOverlap(hb, topRect) || rectsOverlap(hb, bottomRect)) {
+      triggerCollision();
+      return;
+    }
+  }
+}
+
+// --- 12. CloudManager ---
+const CLOUD_COUNT_PER_LAYER = 7;
+const cloudPool = [];
+
+function randomCloudY(layer) {
+  // Far clouds in upper half, near clouds spread more
+  return layer === 0
+    ? C.CANVAS_H * 0.1 + Math.random() * C.CANVAS_H * 0.4
+    : C.CANVAS_H * 0.05 + Math.random() * C.CANVAS_H * 0.5;
+}
+
+function cloudsInit() {
+  cloudPool.length = 0;
+  for (let layer = 0; layer < 2; layer++) {
+    const count = CLOUD_COUNT_PER_LAYER;
+    for (let i = 0; i < count; i++) {
+      const isFar = layer === 0;
+      cloudPool.push({
+        x: Math.random() * C.CANVAS_W,
+        y: randomCloudY(layer),
+        radiusX: isFar ? 20 + Math.random() * 20 : 40 + Math.random() * 30,
+        radiusY: isFar ? 10 + Math.random() * 10 : 20 + Math.random() * 15,
+        layer,
+      });
+    }
+  }
+}
+
+function cloudScrollSpeed(layer) {
+  const multiplier = layer === 0 ? C.CLOUD_SPEED_FAR : C.CLOUD_SPEED_NEAR;
+  return currentPipeSpeed() * multiplier;
+}
+
+function cloudsUpdate(dt) {
+  for (const cloud of cloudPool) {
+    cloud.x -= cloudScrollSpeed(cloud.layer) * dt;
+    if (cloud.x + cloud.radiusX < 0) {
+      cloud.x = C.CANVAS_W + cloud.radiusX;
+      cloud.y = randomCloudY(cloud.layer);
+    }
+  }
+}
+
+function cloudsDraw(ctx, layer) {
+  const alpha = layer === 0 ? C.CLOUD_ALPHA_FAR : C.CLOUD_ALPHA_NEAR;
+  ctx.save();
+  ctx.fillStyle = '#FFFFFF';
+  ctx.globalAlpha = alpha;
+  for (const cloud of cloudPool) {
+    if (cloud.layer !== layer) continue;
+    ctx.beginPath();
+    // Centre puff
+    ctx.ellipse(cloud.x, cloud.y, cloud.radiusX, cloud.radiusY, 0, 0, Math.PI * 2);
+    // Left puff
+    ctx.ellipse(cloud.x - cloud.radiusX * 0.5, cloud.y + cloud.radiusY * 0.2,
+                cloud.radiusX * 0.6, cloud.radiusY * 0.7, 0, 0, Math.PI * 2);
+    // Right puff
+    ctx.ellipse(cloud.x + cloud.radiusX * 0.5, cloud.y + cloud.radiusY * 0.2,
+                cloud.radiusX * 0.6, cloud.radiusY * 0.7, 0, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.restore();
+}
+
+cloudsInit();
+
+// --- 13. ParticleSystem ---
+const PARTICLE_POOL_SIZE = C.PARTICLE_COUNT * C.PARTICLE_LIFESPAN * 2;
+const particlePool = Array.from({ length: PARTICLE_POOL_SIZE },
+  () => ({ x: 0, y: 0, vx: 0, vy: 0, life: 0, maxLife: 0 }));
+let particleHead = 0;
+
+function particlesEmit(x, y) {
+  for (let i = 0; i < C.PARTICLE_COUNT; i++) {
+    const p = particlePool[particleHead % PARTICLE_POOL_SIZE];
+    p.x = x;
+    p.y = y + (Math.random() - 0.5) * C.GHOSTY_H * 0.5;
+    p.vx = -(Math.random() * 40 + 20);
+    p.vy = (Math.random() - 0.5) * 30;
+    p.life = p.maxLife = C.PARTICLE_LIFESPAN;
+    particleHead++;
+  }
+}
+
+function particlesUpdate(dt) {
+  const dtFrames = dt * 60; // convert to ~frame units for lifespan
+  for (const p of particlePool) {
+    if (p.life <= 0) continue;
+    p.life -= dtFrames;
+    p.x += p.vx * dt;
+    p.y += p.vy * dt;
+  }
+}
+
+function particlesDraw(ctx) {
+  ctx.save();
+  ctx.fillStyle = C.COLOUR_PARTICLE; // set once, not per particle
+  for (const p of particlePool) {
+    if (p.life <= 0) continue;
+    ctx.globalAlpha = Math.max(0, p.life / p.maxLife) * 0.8;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, 2, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.restore();
+}
+
+function particlesReset() {
+  for (const p of particlePool) p.life = 0;
+}
+
+// --- 14. EffectsManager ---
+let shakeTimer = 0;
+const scorePopups = [];
+
+function effectsTriggerShake() {
+  shakeTimer = C.SHAKE_DURATION_MS;
+}
+
+function effectsApplyShake(ctx) {
+  if (shakeTimer <= 0) return;
+  const mag = C.SHAKE_MAGNITUDE * (shakeTimer / C.SHAKE_DURATION_MS);
+  ctx.translate(
+    (Math.random() * 2 - 1) * mag,
+    (Math.random() * 2 - 1) * mag
+  );
+}
+
+function effectsSpawnPopup(x, y) {
+  scorePopups.push({ x, y, age: 0, maxAge: C.POPUP_DURATION_MS });
+}
+
+function effectsUpdate(dt) {
+  if (shakeTimer > 0) shakeTimer = Math.max(0, shakeTimer - dt * 1000);
+
+  for (let i = scorePopups.length - 1; i >= 0; i--) {
+    scorePopups[i].age += dt * 1000;
+    if (scorePopups[i].age >= scorePopups[i].maxAge) scorePopups.splice(i, 1);
+  }
+}
+
+function effectsDrawPopups(ctx) {
+  if (scorePopups.length === 0) return;
+  ctx.save();
+  ctx.font = `14px "${C.FONT_FAMILY}"`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  for (const popup of scorePopups) {
+    const t = popup.age / popup.maxAge;
+    ctx.globalAlpha = 1 - t;
+    ctx.fillStyle = '#FFD700';
+    ctx.fillText('+1', popup.x, popup.y - 30 * t);
+  }
+  ctx.restore();
+}
+
+function effectsReset() {
+  shakeTimer = 0;
+  scorePopups.length = 0;
+}
+
+// --- 4.1 State machine ---
+const State = Object.freeze({
+  MENU: 'MENU',
+  PLAYING: 'PLAYING',
+  PAUSED: 'PAUSED',
+  GAME_OVER: 'GAME_OVER',
+});
+
+let currentState = State.MENU;
+let inputConsumed = false;
+
+function enterState(state) {
+  switch (state) {
+    case State.PLAYING:
+      ghostyReset();
+      pipesReset();
+      gatesReset();
+      laserReset();
+      particlesReset();
+      effectsReset();
+      audioBgStart();
+      break;
+    case State.PAUSED:
+      audioBgPause();
+      break;
+    case State.GAME_OVER:
+      audioBgStop();
+      storageSetHighScore(score);
+      break;
+    case State.MENU:
+      audioBgStop();
+      break;
+  }
+}
+
+function exitState(state) {
+  // Reserved for future cleanup
+}
+
+function transitionTo(newState) {
+  exitState(currentState);
+  currentState = newState;
+  inputConsumed = true;
+  enterState(newState);
+}
+
+// --- 4.2 Input handlers ---
+let audioReady = false;
+
+function ensureAudio() {
+  if (audioReady) return;
+  audioInit();
+  audioReady = true;
+  // Request fullscreen on first user interaction (requires a gesture)
+  const el = document.documentElement;
+  if (el.requestFullscreen) el.requestFullscreen().catch(() => {});
+  else if (el.webkitRequestFullscreen) el.webkitRequestFullscreen();
+}
+
+function handlePointer(clientX, clientY) {
+  const rect = canvas.getBoundingClientRect();
+  const lx = (clientX - rect.left) * (C.CANVAS_W / rect.width);
+  const ly = (clientY - rect.top)  * (C.CANVAS_H / rect.height);
+  handleInput('tap', lx, ly);
+}
+
+function handleInput(type, px, py) {
+  ensureAudio();
+  if (inputConsumed) { inputConsumed = false; return; }
+
+  switch (currentState) {
+    case State.MENU:
+      if (type === 'action' || type === 'tap') {
+        transitionTo(State.PLAYING);
+      }
+      break;
+    case State.PLAYING:
+      if (type === 'action' || type === 'tap') {
+        ghostyFlap();
+      }
+      if (type === 'pause') {
+        transitionTo(State.PAUSED);
+      }
+      if (type === 'laser') {
+        laserFire();
+      }
+      break;
+    case State.PAUSED:
+      if (type === 'pause' || type === 'action') {
+        transitionTo(State.PLAYING);
+      }
+      break;
+    case State.GAME_OVER:
+      if (type === 'action' || type === 'tap') {
+        transitionTo(State.PLAYING);
+      }
+      break;
+  }
+}
+
+document.addEventListener('keydown', (e) => {
+  if (e.code === 'ArrowUp')   { e.preventDefault(); handleInput('action'); }
+  if (e.code === 'ArrowDown') { e.preventDefault(); handleInput('action'); }
+  if (e.code === 'Space')     { e.preventDefault(); handleInput('action'); } // keep as fallback
+  if (e.code === 'Escape' || e.code === 'KeyP') { e.preventDefault(); handleInput('pause'); }
+  if (e.code === 'KeyL') { e.preventDefault(); handleInput('laser'); }
+  // Ignore all other keys — Tab, Enter, arrows etc. must not trigger game actions
+});
+
+canvas.addEventListener('click', (e) => handlePointer(e.clientX, e.clientY));
+canvas.addEventListener('touchstart', (e) => {
+  e.preventDefault();
+  handlePointer(e.touches[0].clientX, e.touches[0].clientY);
+}, { passive: false });
+
+// Reset timestamp on tab focus to prevent dt spike after tab switch
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden) lastTimestamp = 0;
+});
+
+// --- 17 & 18. Game loop, render pipeline, and screen overlays ---
+let lastTimestamp = 0;
+
+// FPS tracking (DEBUG mode only)
+let _fpsFrameCount = 0;
+let _fpsLastTime = 0;
+let _fpsDisplay = 0;
+let _frameMs = 0;
+
+// Helper utilities
+function lerp(a, b, t) { return a + (b - a) * t; }
+function clamp(v, min, max) { return Math.max(min, Math.min(max, v)); }
+
+function drawGround(ctx) {
+  const groundY = C.CANVAS_H - C.GROUND_HEIGHT;
+  ctx.fillStyle = C.COLOUR_GROUND;
+  ctx.fillRect(0, groundY, C.CANVAS_W, C.GROUND_HEIGHT);
+  ctx.fillStyle = C.COLOUR_GROUND_TOP;
+  ctx.fillRect(0, groundY, C.CANVAS_W, 4);
+}
+
+// --- Update dispatcher ---
+function update(dt) {
+  switch (currentState) {
+    case State.MENU:
+      cloudsUpdate(dt);
+      break;
+    case State.PLAYING:
+      ghostyUpdate(dt);
+      if (currentState !== State.PLAYING) break; // guard: ghostyUpdate may transition to GAME_OVER
+      pipesUpdate(dt);
+      gatesUpdate(dt);
+      laserUpdate(dt);
+      cloudsUpdate(dt);
+      particlesUpdate(dt);
+      effectsUpdate(dt);
+      checkCollisions();
+      break;
+    case State.PAUSED:
+      // Nothing updates while paused
+      break;
+    case State.GAME_OVER:
+      cloudsUpdate(dt);
+      effectsUpdate(dt);
+      break;
+  }
+}
+
+// --- Render dispatcher ---
+function render() {
+  ctx.clearRect(0, 0, C.CANVAS_W, C.CANVAS_H);
+
+  switch (currentState) {
+    case State.MENU:      renderMenu();     break;
+    case State.PLAYING:   renderPlaying();  break;
+    case State.PAUSED:    renderPaused();   break;
+    case State.GAME_OVER: renderGameOver(); break;
+  }
+
+  // DEBUG: FPS and frame time overlay
+  if (C.DEBUG) {
+    const color = _fpsDisplay < 50 ? '#FF4444' : _fpsDisplay < 55 ? '#FFAA00' : '#44FF88';
+    ctx.font = '10px monospace';
+    ctx.textAlign = 'right';
+    ctx.textBaseline = 'top';
+    ctx.fillStyle = 'rgba(0,0,0,0.6)';
+    ctx.fillRect(C.CANVAS_W - 90, 2, 88, 28);
+    ctx.fillStyle = color;
+    ctx.fillText(`${_fpsDisplay} FPS`, C.CANVAS_W - 6, 5);
+    ctx.fillStyle = _frameMs > 16 ? '#FF4444' : '#AAAAAA';
+    ctx.fillText(`${_frameMs.toFixed(1)}ms`, C.CANVAS_W - 6, 17);
+  }
+}
+
+function renderBackground(ctx) {
+  ctx.fillStyle = C.COLOUR_SKY;
+  ctx.fillRect(0, 0, C.CANVAS_W, C.CANVAS_H);
+  cloudsDraw(ctx, 0); // far clouds
+  cloudsDraw(ctx, 1); // near clouds
+}
+
+function renderMenu() {
+  renderBackground(ctx);
+  drawGround(ctx);
+
+  // Title
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  // Shadow
+  ctx.fillStyle = 'rgba(0,0,0,0.5)';
+  ctx.font = `20px "${C.FONT_FAMILY}"`;
+  ctx.fillText('FLAPPY KIRO', C.CANVAS_W / 2 + 2, 162);
+  // Text
+  ctx.fillStyle = '#FFFFFF';
+  ctx.fillText('FLAPPY KIRO', C.CANVAS_W / 2, 160);
+
+  // Ghosty idle on menu
+  ghostyDraw(ctx);
+
+  // High score
+  const hs = storageGetHighScore();
+  ctx.font = `10px "${C.FONT_FAMILY}"`;
+  ctx.fillStyle = '#FFD700';
+  ctx.fillText(`BEST: ${hs}`, C.CANVAS_W / 2, 480);
+
+  // Prompt
+  ctx.font = `8px "${C.FONT_FAMILY}"`;
+  ctx.fillStyle = '#B0BEC5';
+  ctx.fillText('PRESS ↑ ↓ OR TAP', C.CANVAS_W / 2, 530);
+  ctx.fillText('TO START', C.CANVAS_W / 2, 548);
+}
+
+function renderPlaying() {
+  ctx.save();
+  effectsApplyShake(ctx);
+
+  // Background
+  ctx.fillStyle = C.COLOUR_SKY;
+  ctx.fillRect(0, 0, C.CANVAS_W, C.CANVAS_H);
+  cloudsDraw(ctx, 0);
+  cloudsDraw(ctx, 1);
+
+  // Game objects
+  pipesDraw(ctx);
+  gatesDraw(ctx);
+  drawGround(ctx);
+  particlesDraw(ctx);
+  ghostyDraw(ctx);
+  effectsDrawPopups(ctx);
+
+  ctx.restore();
+
+  // HUD — drawn outside shake wrapper
+  ctx.textAlign = 'right';
+  ctx.textBaseline = 'top';
+  ctx.font = `16px "${C.FONT_FAMILY}"`;
+  ctx.fillStyle = 'rgba(0,0,0,0.4)';
+  ctx.fillText(`${score}`, C.CANVAS_W - 18, 22);
+  ctx.fillStyle = '#FFFFFF';
+  ctx.fillText(`${score}`, C.CANVAS_W - 20, 20);
+
+  // Pause hint
+  ctx.textAlign = 'left';
+  ctx.font = `8px "${C.FONT_FAMILY}"`;
+  ctx.fillStyle = 'rgba(255,255,255,0.4)';
+  ctx.fillText('[P] PAUSE', 12, 20);
+
+  // Impossible mode countdown
+  if (impossibleActive) {
+    const secs = Math.ceil(impossibleTimer / 1000);
+    // Flashing red background pill
+    ctx.fillStyle = `rgba(255,50,50,${0.5 + 0.3 * Math.sin(Date.now() / 150)})`;
+    ctx.beginPath();
+    ctx.roundRect(8, 34, 130, 22, 4);
+    ctx.fill();
+    ctx.font = `8px "${C.FONT_FAMILY}"`;
+    ctx.fillStyle = '#FFFFFF';
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(`IMPOSSIBLE ${secs}s`, 14, 45);
+  }
+
+  // Laser HUD
+  laserDraw(ctx);
+}
+
+function renderPaused() {
+  // Draw frozen game frame underneath
+  ctx.save();
+  ctx.fillStyle = C.COLOUR_SKY;
+  ctx.fillRect(0, 0, C.CANVAS_W, C.CANVAS_H);
+  cloudsDraw(ctx, 0);
+  cloudsDraw(ctx, 1);
+  pipesDraw(ctx);
+  drawGround(ctx);
+  particlesDraw(ctx);
+  ghostyDraw(ctx);
+  ctx.restore();
+
+  // Dim overlay
+  ctx.fillStyle = 'rgba(0,0,0,0.55)';
+  ctx.fillRect(0, 0, C.CANVAS_W, C.CANVAS_H);
+
+  // Paused text
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.font = `20px "${C.FONT_FAMILY}"`;
+  ctx.fillStyle = '#FFFFFF';
+  ctx.fillText('PAUSED', C.CANVAS_W / 2, 280);
+
+  ctx.font = `8px "${C.FONT_FAMILY}"`;
+  ctx.fillStyle = '#B0BEC5';
+  ctx.fillText('PRESS P OR ESC', C.CANVAS_W / 2, 330);
+  ctx.fillText('TO RESUME', C.CANVAS_W / 2, 348);
+}
+
+function renderGameOver() {
+  renderBackground(ctx);
+  drawGround(ctx);
+
+  // "GAME OVER" title
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.font = `20px "${C.FONT_FAMILY}"`;
+  ctx.fillStyle = 'rgba(0,0,0,0.5)';
+  ctx.fillText('GAME OVER', C.CANVAS_W / 2 + 2, 162);
+  ctx.fillStyle = '#EF5350';
+  ctx.fillText('GAME OVER', C.CANVAS_W / 2, 160);
+
+  // Scores
+  ctx.font = `12px "${C.FONT_FAMILY}"`;
+  ctx.fillStyle = '#FFFFFF';
+  ctx.fillText(`SCORE  ${score}`, C.CANVAS_W / 2, 240);
+
+  const hs = storageGetHighScore();
+  const isNewBest = score > 0 && score >= hs;
+  ctx.fillStyle = isNewBest ? '#FFD700' : '#FFFFFF';
+  ctx.fillText(`BEST   ${hs}`, C.CANVAS_W / 2, 270);
+
+  if (isNewBest) {
+    ctx.font = `10px "${C.FONT_FAMILY}"`;
+    ctx.fillStyle = '#FFC107';
+    ctx.fillText('NEW BEST!', C.CANVAS_W / 2, 310);
+  }
+
+  // Restart prompt
+  ctx.font = `8px "${C.FONT_FAMILY}"`;
+  ctx.fillStyle = '#B0BEC5';
+  ctx.fillText('PRESS ↑ ↓ OR TAP', C.CANVAS_W / 2, 400);
+  ctx.fillText('TO RESTART', C.CANVAS_W / 2, 418);
+}
+
+function gameLoop(timestamp) {
+  const rawDt = (timestamp - lastTimestamp) / 1000;
+  const dt = Math.min(rawDt, C.MAX_DELTA);
+  lastTimestamp = timestamp;
+
+  if (C.DEBUG) {
+    const frameStart = performance.now();
+    update(dt);
+    render();
+    _frameMs = performance.now() - frameStart;
+    _fpsFrameCount++;
+    if (timestamp - _fpsLastTime >= 1000) {
+      _fpsDisplay = _fpsFrameCount;
+      _fpsFrameCount = 0;
+      _fpsLastTime = timestamp;
+    }
+  } else {
+    update(dt);
+    render();
+  }
+
+  (window.requestAnimationFrame || ((cb) => setTimeout(cb, 16)))(gameLoop);
+}
+
+// Kick off — first frame sets lastTimestamp, second frame starts the loop
+(window.requestAnimationFrame || ((cb) => setTimeout(cb, 16)))((t) => {
+  lastTimestamp = t;
+  (window.requestAnimationFrame || ((cb) => setTimeout(cb, 16)))(gameLoop);
+});
+</script>
+
+</body>
+</html>

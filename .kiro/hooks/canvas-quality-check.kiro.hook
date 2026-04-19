@@ -1,0 +1,16 @@
+{
+  "enabled": true,
+  "name": "Canvas Quality Check",
+  "description": "When index.html is saved, automatically checks for Canvas API misuse, memory allocations in hot paths, and collision detection correctness.",
+  "version": "1",
+  "when": {
+    "type": "fileEdited",
+    "patterns": [
+      "index.html"
+    ]
+  },
+  "then": {
+    "type": "askAgent",
+    "prompt": "index.html was just saved. Run a focused quality check on three areas:\n\n**1. Canvas API Usage**\n- Scan for ctx.save/restore inside for/while loops — flag any found\n- Scan for ctx.fillStyle, ctx.strokeStyle, ctx.font, ctx.globalAlpha being set inside loops where they could be hoisted above\n- Check ctx.shadowBlur is not set inside per-frame draw loops\n- Verify ctx.imageSmoothingEnabled = false is present after resizeCanvas()\n\n**2. Memory Management in Hot Paths**\n- Scan update() and render() call trees for object literal allocations ({}) — flag any found outside of scorePopups\n- Check pipePool and particlePool are pre-allocated arrays, not grown dynamically\n- Verify no Array.push inside pipesUpdate or particlesUpdate (ring buffer pattern)\n\n**3. Collision Detection**\n- Verify rectsOverlap uses strict < / > (not <= / >=) for touching-edge exclusion\n- Verify bottomRect.h = C.CANVAS_H - (pipe.gapY + halfGap), not C.CANVAS_H\n- Verify ghostyHitbox() insets by C.HITBOX_INSET on all 4 sides\n- Verify checkCollisions() has the invincibility guard as its first line\n- Verify the post-transition guard exists after ghostyUpdate(dt) in the PLAYING update branch\n\nReport only violations. If all checks pass, output \"✅ All quality checks passed\". Keep the output concise."
+  }
+}
