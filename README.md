@@ -2,7 +2,7 @@
 
 A retro-styled, browser-based endless scroller game inspired by Flappy Bird. Control Ghosty — a ghost character — through vertically-scrolling pipe obstacles. Built entirely in vanilla JavaScript with no frameworks, no build step, and no backend required.
 
-**Live:** https://jazzy-duckanoo-b37c36.netlify.app
+**Live:** https://flappy-aadhan-b37c36.netlify.app/
 
 ![Flappy Aadhan UI](img/example-ui.png)
 
@@ -40,7 +40,7 @@ A retro-styled, browser-based endless scroller game inspired by Flappy Bird. Con
 | Delivery | Single `index.html` + 3 asset files |
 | Canvas size | 480 × 640 px (HiDPI-aware) |
 | Target FPS | 60 |
-| Live URL | https://jazzy-duckanoo-b37c36.netlify.app |
+| Live URL | https://flappy-aadhan-b37c36.netlify.app/ |
 
 ---
 
@@ -377,7 +377,7 @@ Flappy_Kiro/
 All values live in the `<script id="config">` block in `index.html`. Override any value via URL query parameter:
 
 ```
-https://jazzy-duckanoo-b37c36.netlify.app?GRAVITY=1200&PIPE_GAP=100
+https://flappy-aadhan-b37c36.netlify.app?GRAVITY=1200&PIPE_GAP=100
 ```
 
 | Key | Default | Description |
